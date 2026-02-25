@@ -22,11 +22,121 @@ function asNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parseJsonObject(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function isValidStatus(status) {
   return ORDER_STATUSES.includes(status);
 }
 
-function getMeasurementForSnapshot(customerId, measurementId, useLatestMeasurement) {
+function asPositiveInteger(value, fallback = 1) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function normalizeOrderItems(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return null;
+  }
+
+  const normalized = [];
+  for (const item of items) {
+    const itemType = asOptionalText(item?.item_type);
+    const quantity = asPositiveInteger(item?.quantity);
+    const rate = asNumber(item?.rate, 0);
+
+    if (!itemType || quantity === null || rate < 0) {
+      return null;
+    }
+
+    normalized.push({
+      item_type: itemType,
+      quantity,
+      rate,
+      line_total: quantity * rate
+    });
+  }
+  return normalized;
+}
+
+function calculateTotals(subtotal, discountType, discountValue) {
+  const safeSubtotal = Math.max(0, asNumber(subtotal, 0));
+  const safeDiscountValue = Math.max(0, asNumber(discountValue, 0));
+
+  if (!["amount", "percent"].includes(discountType)) {
+    return null;
+  }
+
+  const discountAmount =
+    discountType === "percent"
+      ? safeSubtotal * Math.min(safeDiscountValue, 100) * 0.01
+      : Math.min(safeDiscountValue, safeSubtotal);
+
+  const finalTotal = Math.max(0, safeSubtotal - discountAmount);
+  return {
+    subtotal: safeSubtotal,
+    discount_type: discountType,
+    discount_value: safeDiscountValue,
+    final_total: finalTotal
+  };
+}
+
+function getOrderPaidTotal(orderId) {
+  const row = db
+    .prepare(
+      `
+      SELECT
+        COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.order_id = ?), 0)
+        + COALESCE((SELECT o.advance_paid FROM orders o WHERE o.id = ?), 0) AS paid_total
+    `
+    )
+    .get(orderId, orderId);
+  return asNumber(row?.paid_total, 0);
+}
+
+function recomputeOrderRemainingDue(orderId) {
+  db.prepare(
+    `
+      UPDATE orders
+      SET remaining_due = MAX(
+        0,
+        COALESCE(total_amount, 0) - (
+          COALESCE(advance_paid, 0)
+          + COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.order_id = orders.id), 0)
+        )
+      )
+      WHERE id = ?
+    `
+  ).run(orderId);
+}
+
+function getMeasurementForSnapshot(
+  customerId,
+  measurementId,
+  useLatestMeasurement,
+  garmentType
+) {
   if (measurementId) {
     return db
       .prepare("SELECT * FROM measurements WHERE id = ? AND customer_id = ?")
@@ -35,6 +145,21 @@ function getMeasurementForSnapshot(customerId, measurementId, useLatestMeasureme
 
   if (!useLatestMeasurement) {
     return null;
+  }
+
+  const type = asOptionalText(garmentType);
+  if (type) {
+    return db
+      .prepare(
+        `
+        SELECT *
+        FROM measurements
+        WHERE customer_id = ? AND LOWER(item_type) = LOWER(?)
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+      `
+      )
+      .get(customerId, type);
   }
 
   return db
@@ -59,13 +184,14 @@ function saveMeasurementSnapshot(orderId, customerId, measurement) {
     `
     INSERT INTO order_measurement_snapshots (
       order_id, customer_id, source_measurement_id,
-      neck, chest, waist, hip, shoulder, sleeve, length, inseam, notes
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      item_type, neck, chest, waist, hip, shoulder, sleeve, length, inseam, notes, measurement_data
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `
   ).run(
     orderId,
     customerId,
     measurement.id ?? null,
+    measurement.item_type ?? null,
     measurement.neck ?? null,
     measurement.chest ?? null,
     measurement.waist ?? null,
@@ -74,7 +200,8 @@ function saveMeasurementSnapshot(orderId, customerId, measurement) {
     measurement.sleeve ?? null,
     measurement.length ?? null,
     measurement.inseam ?? null,
-    asOptionalText(measurement.notes)
+    asOptionalText(measurement.notes),
+    measurement.measurement_data ?? null
   );
 }
 
@@ -90,6 +217,7 @@ router.get("/", (req, res) => {
         + COALESCE(o.advance_paid, 0)
       ) AS paid_total,
       s.source_measurement_id,
+      s.item_type AS snap_item_type,
       s.neck AS snap_neck,
       s.chest AS snap_chest,
       s.waist AS snap_waist,
@@ -99,6 +227,7 @@ router.get("/", (req, res) => {
       s.length AS snap_length,
       s.inseam AS snap_inseam,
       s.notes AS snap_notes,
+      s.measurement_data AS snap_measurement_data,
       s.created_at AS snapshot_created_at
     FROM orders o
     JOIN customers c ON c.id = o.customer_id
@@ -107,7 +236,20 @@ router.get("/", (req, res) => {
     ORDER BY o.created_at DESC
   `;
 
-  const rows = customerId ? db.prepare(sql).all(customerId) : db.prepare(sql).all();
+  const itemStmt = db.prepare(
+    `
+      SELECT id, order_id, item_type, quantity, rate, line_total
+      FROM order_items
+      WHERE order_id = ?
+      ORDER BY id ASC
+    `
+  );
+
+  const rows = (customerId ? db.prepare(sql).all(customerId) : db.prepare(sql).all()).map((row) => ({
+    ...row,
+    snap_measurement_data: parseJsonObject(row.snap_measurement_data) || {},
+    items: itemStmt.all(row.id)
+  }));
   return res.json(rows);
 });
 
@@ -115,8 +257,11 @@ router.post("/", authorizeRoles("admin"), (req, res) => {
   const {
     customer_id,
     garment_type,
+    items,
     status,
-    total_amount,
+    subtotal,
+    discount_type,
+    discount_value,
     advance_paid,
     due_date,
     delivery_date,
@@ -126,8 +271,8 @@ router.post("/", authorizeRoles("admin"), (req, res) => {
     status_note
   } = req.body;
 
-  if (!customer_id || !garment_type) {
-    return res.status(400).json({ message: "customer_id and garment_type are required" });
+  if (!customer_id) {
+    return res.status(400).json({ message: "customer_id is required" });
   }
 
   const customerId = Number(customer_id);
@@ -143,13 +288,41 @@ router.post("/", authorizeRoles("admin"), (req, res) => {
       .json({ message: `status must be one of: ${ORDER_STATUSES.join(", ")}` });
   }
 
+  const normalizedItems = normalizeOrderItems(items);
+  if (!normalizedItems) {
+    return res.status(400).json({
+      message: "items are required and each item must include item_type, quantity (> 0), rate (>= 0)"
+    });
+  }
+
+  const computedSubtotal = normalizedItems.reduce((sum, item) => sum + item.line_total, 0);
+  const totals = calculateTotals(
+    subtotal === undefined ? computedSubtotal : subtotal,
+    discount_type || "amount",
+    discount_value || 0
+  );
+  if (!totals) {
+    return res.status(400).json({ message: "discount_type must be amount or percent" });
+  }
+
+  const resolvedGarmentType =
+    asOptionalText(garment_type) ||
+    (normalizedItems.length === 1
+      ? normalizedItems[0].item_type
+      : `${normalizedItems[0].item_type} +${normalizedItems.length - 1} more`);
+
+  const shouldUseLatestMeasurement =
+    use_latest_measurement === undefined ? true : Boolean(use_latest_measurement);
   const measurement = getMeasurementForSnapshot(
     customerId,
     measurement_id,
-    Boolean(use_latest_measurement)
+    shouldUseLatestMeasurement,
+    normalizedItems[0].item_type
   );
-  if ((measurement_id || use_latest_measurement) && !measurement) {
-    return res.status(400).json({ message: "Measurement not found for snapshot" });
+  if (!measurement) {
+    return res.status(400).json({
+      message: "No measurements found. Save customer measurements first."
+    });
   }
 
   const transaction = db.transaction(() => {
@@ -157,22 +330,36 @@ router.post("/", authorizeRoles("admin"), (req, res) => {
       .prepare(
         `
         INSERT INTO orders (
-          customer_id, garment_type, status, total_amount, advance_paid, due_date, delivery_date, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          customer_id, garment_type, status, subtotal, discount_type, discount_value, total_amount, advance_paid, remaining_due, due_date, delivery_date, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
       )
       .run(
         customerId,
-        garment_type,
+        resolvedGarmentType,
         nextStatus,
-        asNumber(total_amount, 0),
-        asNumber(advance_paid, 0),
+        totals.subtotal,
+        totals.discount_type,
+        totals.discount_value,
+        totals.final_total,
+        Math.max(0, asNumber(advance_paid, 0)),
+        Math.max(0, totals.final_total - Math.max(0, asNumber(advance_paid, 0))),
         asOptionalText(due_date),
         asOptionalText(delivery_date),
         asOptionalText(notes)
       );
 
     const orderId = Number(result.lastInsertRowid);
+
+    const itemInsert = db.prepare(
+      `
+        INSERT INTO order_items (order_id, item_type, quantity, rate, line_total)
+        VALUES (?, ?, ?, ?, ?)
+      `
+    );
+    for (const item of normalizedItems) {
+      itemInsert.run(orderId, item.item_type, item.quantity, item.rate, item.line_total);
+    }
 
     db.prepare(
       `
@@ -187,7 +374,17 @@ router.post("/", authorizeRoles("admin"), (req, res) => {
 
   const orderId = transaction();
   const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
-  return res.status(201).json(order);
+  const orderItems = db
+    .prepare(
+      `
+        SELECT id, order_id, item_type, quantity, rate, line_total
+        FROM order_items
+        WHERE order_id = ?
+        ORDER BY id ASC
+      `
+    )
+    .all(orderId);
+  return res.status(201).json({ ...order, items: orderItems });
 });
 
 router.put("/:id", authorizeRoles("admin"), (req, res) => {
@@ -216,6 +413,19 @@ router.put("/:id", authorizeRoles("admin"), (req, res) => {
       .json({ message: `status must be one of: ${ORDER_STATUSES.join(", ")}` });
   }
 
+  const nextTotalAmount = Math.max(0, asNumber(total_amount, existing.total_amount));
+  const nextAdvancePaid = Math.max(0, asNumber(advance_paid, existing.advance_paid));
+  if (nextStatus === "completed") {
+    const additionalPayments = Math.max(0, getOrderPaidTotal(orderId) - Math.max(0, asNumber(existing.advance_paid, 0)));
+    const paidTotal = nextAdvancePaid + additionalPayments;
+    const due = Math.max(0, nextTotalAmount - paidTotal);
+    if (due > 0.009) {
+      return res.status(400).json({
+        message: `Cannot mark order completed until pending due ${due.toFixed(2)} is settled`
+      });
+    }
+  }
+
   const transaction = db.transaction(() => {
     db.prepare(
       `
@@ -226,13 +436,15 @@ router.put("/:id", authorizeRoles("admin"), (req, res) => {
     ).run(
       garment_type ?? existing.garment_type,
       nextStatus,
-      asNumber(total_amount, existing.total_amount),
-      asNumber(advance_paid, existing.advance_paid),
+      nextTotalAmount,
+      nextAdvancePaid,
       due_date === "" ? null : due_date ?? existing.due_date,
       delivery_date === "" ? null : delivery_date ?? existing.delivery_date,
       notes === "" ? null : notes ?? existing.notes,
       orderId
     );
+
+    recomputeOrderRemainingDue(orderId);
 
     if (nextStatus !== existing.status) {
       db.prepare(
@@ -304,6 +516,8 @@ router.post("/:id/payments", authorizeRoles("admin"), (req, res) => {
       asOptionalText(paid_at) || new Date().toISOString(),
       asOptionalText(notes)
     );
+
+  recomputeOrderRemainingDue(orderId);
 
   const payment = db.prepare("SELECT * FROM payments WHERE id = ?").get(result.lastInsertRowid);
   return res.status(201).json(payment);

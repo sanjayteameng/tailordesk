@@ -11,14 +11,18 @@ const db = new Database(dbPath);
 
 db.pragma("foreign_keys = ON");
 
-const ORDER_STATUSES = [
-  "pending",
-  "in_progress",
-  "trial",
-  "ready",
-  "delivered",
-  "cancelled"
-];
+const ORDER_STATUSES = ["pending", "completed", "cancelled"];
+
+function hasColumn(tableName, columnName) {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  return rows.some((row) => row.name === columnName);
+}
+
+function addColumnIfMissing(tableName, columnName, columnSql) {
+  if (!hasColumn(tableName, columnName)) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnSql}`);
+  }
+}
 
 function initDb() {
   db.exec(`
@@ -44,6 +48,7 @@ function initDb() {
     CREATE TABLE IF NOT EXISTS measurements (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       customer_id INTEGER NOT NULL,
+      item_type TEXT,
       neck REAL,
       chest REAL,
       waist REAL,
@@ -53,6 +58,7 @@ function initDb() {
       length REAL,
       inseam REAL,
       notes TEXT,
+      measurement_data TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
     );
@@ -62,8 +68,12 @@ function initDb() {
       customer_id INTEGER NOT NULL,
       garment_type TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
+      subtotal REAL NOT NULL DEFAULT 0,
+      discount_type TEXT NOT NULL DEFAULT 'amount' CHECK(discount_type IN ('amount', 'percent')),
+      discount_value REAL NOT NULL DEFAULT 0,
       total_amount REAL NOT NULL DEFAULT 0,
       advance_paid REAL NOT NULL DEFAULT 0,
+      remaining_due REAL NOT NULL DEFAULT 0,
       due_date TEXT,
       delivery_date TEXT,
       notes TEXT,
@@ -85,11 +95,23 @@ function initDb() {
       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS order_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      item_type TEXT NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 1 CHECK(quantity > 0),
+      rate REAL NOT NULL DEFAULT 0 CHECK(rate >= 0),
+      line_total REAL NOT NULL DEFAULT 0 CHECK(line_total >= 0),
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS order_measurement_snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       order_id INTEGER NOT NULL UNIQUE,
       customer_id INTEGER NOT NULL,
       source_measurement_id INTEGER,
+      item_type TEXT,
       neck REAL,
       chest REAL,
       waist REAL,
@@ -99,6 +121,7 @@ function initDb() {
       length REAL,
       inseam REAL,
       notes TEXT,
+      measurement_data TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE,
       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE,
@@ -125,6 +148,65 @@ function initDb() {
       ON payments(customer_id, paid_at DESC);
     CREATE INDEX IF NOT EXISTS idx_status_history_order_changed
       ON order_status_history(order_id, changed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_order_items_order
+      ON order_items(order_id, created_at ASC);
+  `);
+
+  addColumnIfMissing("measurements", "item_type", "item_type TEXT");
+  addColumnIfMissing("measurements", "measurement_data", "measurement_data TEXT");
+  addColumnIfMissing(
+    "order_measurement_snapshots",
+    "item_type",
+    "item_type TEXT"
+  );
+  addColumnIfMissing(
+    "order_measurement_snapshots",
+    "measurement_data",
+    "measurement_data TEXT"
+  );
+  addColumnIfMissing("orders", "subtotal", "subtotal REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing(
+    "orders",
+    "discount_type",
+    "discount_type TEXT NOT NULL DEFAULT 'amount'"
+  );
+  addColumnIfMissing("orders", "discount_value", "discount_value REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing("orders", "remaining_due", "remaining_due REAL NOT NULL DEFAULT 0");
+
+  db.exec(`
+    UPDATE orders
+    SET status = CASE
+      WHEN status IN ('delivered', 'ready') THEN 'completed'
+      WHEN status IN ('in_progress', 'trial') THEN 'pending'
+      WHEN status NOT IN ('pending', 'completed', 'cancelled') THEN 'pending'
+      ELSE status
+    END;
+
+    UPDATE order_status_history
+    SET from_status = CASE
+      WHEN from_status IN ('delivered', 'ready') THEN 'completed'
+      WHEN from_status IN ('in_progress', 'trial') THEN 'pending'
+      WHEN from_status IS NULL THEN NULL
+      WHEN from_status NOT IN ('pending', 'completed', 'cancelled') THEN 'pending'
+      ELSE from_status
+    END;
+
+    UPDATE order_status_history
+    SET to_status = CASE
+      WHEN to_status IN ('delivered', 'ready') THEN 'completed'
+      WHEN to_status IN ('in_progress', 'trial') THEN 'pending'
+      WHEN to_status NOT IN ('pending', 'completed', 'cancelled') THEN 'pending'
+      ELSE to_status
+    END;
+
+    UPDATE orders
+    SET remaining_due = MAX(
+      0,
+      COALESCE(total_amount, 0) - (
+        COALESCE(advance_paid, 0)
+        + COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.order_id = orders.id), 0)
+      )
+    );
   `);
 
   const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || "admin@tailordesk.local";

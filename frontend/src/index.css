@@ -23,3 +23,38 @@ body {
 #root {
   min-height: 100vh;
 }
+
+@keyframes td-toast-in {
+  from {
+    opacity: 0;
+    transform: translate3d(18px, -10px, 0) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes td-toast-progress {
+  from {
+    width: 100%;
+    opacity: 1;
+  }
+  to {
+    width: 0%;
+    opacity: 0.7;
+  }
+}
+
+.td-toast-enter {
+  animation: td-toast-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.td-toast-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.td-toast-progress {
+  animation: td-toast-progress 2200ms linear forwards;
+}
