@@ -28,7 +28,7 @@ function authorizeRoles(...roles) {
 
 function signToken(user) {
   return jwt.sign(
-    { id: user.id, name: user.name, email: user.email, role: user.role },
+    { id: user.id, name: user.name, email: user.email, mobile: user.mobile || null, role: user.role },
     process.env.JWT_SECRET,
     { expiresIn: "12h" }
   );

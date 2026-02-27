@@ -207,6 +207,18 @@ function saveMeasurementSnapshot(orderId, customerId, measurement) {
 
 router.get("/", (req, res) => {
   const customerId = req.query.customerId ? Number(req.query.customerId) : null;
+  const isAdmin = req.user?.role === "admin";
+
+  const filters = [];
+  const params = [];
+  if (customerId) {
+    filters.push("o.customer_id = ?");
+    params.push(customerId);
+  }
+  if (!isAdmin) {
+    filters.push("o.status IN ('pending', 'completed')");
+  }
+  const whereClause = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
 
   const sql = `
     SELECT
@@ -232,7 +244,7 @@ router.get("/", (req, res) => {
     FROM orders o
     JOIN customers c ON c.id = o.customer_id
     LEFT JOIN order_measurement_snapshots s ON s.order_id = o.id
-    ${customerId ? "WHERE o.customer_id = ?" : ""}
+    ${whereClause}
     ORDER BY o.created_at DESC
   `;
 
@@ -245,7 +257,7 @@ router.get("/", (req, res) => {
     `
   );
 
-  const rows = (customerId ? db.prepare(sql).all(customerId) : db.prepare(sql).all()).map((row) => ({
+  const rows = db.prepare(sql).all(...params).map((row) => ({
     ...row,
     snap_measurement_data: parseJsonObject(row.snap_measurement_data) || {},
     items: itemStmt.all(row.id)

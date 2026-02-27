@@ -219,8 +219,13 @@ export default function App() {
     return raw ? JSON.parse(raw) : null;
   });
 
-  const [email, setEmail] = useState("admin@tailordesk.local");
-  const [password, setPassword] = useState("Admin@123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [bootstrapNeeded, setBootstrapNeeded] = useState(false);
+  const [setupName, setSetupName] = useState("");
+  const [setupEmail, setSetupEmail] = useState("");
+  const [setupMobile, setSetupMobile] = useState("");
+  const [setupPassword, setSetupPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -242,6 +247,19 @@ export default function App() {
   const [paymentDraft, setPaymentDraft] = useState(emptyPaymentDraft);
   const [showOrdersModal, setShowOrdersModal] = useState(false);
   const [showOrderCreatedModal, setShowOrderCreatedModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [activeTopView, setActiveTopView] = useState("workspace");
+  const [dashboardSection, setDashboardSection] = useState("overview");
+  const [profileError, setProfileError] = useState("");
+  const [profileDraft, setProfileDraft] = useState({
+    name: "",
+    email: "",
+    mobile: "",
+    current_password: "",
+    new_password: "",
+    confirm_password: ""
+  });
   const [completionModalOrder, setCompletionModalOrder] = useState(null);
   const [completionMethod, setCompletionMethod] = useState("cash");
   const [completionNote, setCompletionNote] = useState("");
@@ -252,12 +270,49 @@ export default function App() {
   const [showPaymentErrors, setShowPaymentErrors] = useState(false);
   const [stepSaved, setStepSaved] = useState({ 2: false, 3: false, 4: false });
   const [orderDate, setOrderDate] = useState(todayIsoDate());
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminUsersLoading, setAdminUsersLoading] = useState(false);
+  const [adminOrders, setAdminOrders] = useState([]);
+  const [adminOrdersLoading, setAdminOrdersLoading] = useState(false);
+  const [newUserDraft, setNewUserDraft] = useState({
+    name: "",
+    email: "",
+    mobile: "",
+    password: "",
+    role: "user"
+  });
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [userModalMode, setUserModalMode] = useState("create");
+  const [editingUserId, setEditingUserId] = useState(null);
 
   const isAdmin = user?.role === "admin";
 
   useEffect(() => {
     if (!token) return;
     loadSession();
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (activeTopView !== "dashboard") return;
+    if (dashboardSection === "users") {
+      if (isAdmin) loadAdminUsers();
+      return;
+    }
+    if (dashboardSection === "orders" || dashboardSection === "payments" || dashboardSection === "overview") {
+      loadAdminOrders();
+    }
+  }, [token, isAdmin, activeTopView, dashboardSection]);
+
+  useEffect(() => {
+    if (!token || isAdmin) return;
+    setActiveTopView("dashboard");
+    setDashboardSection("orders");
+  }, [token, isAdmin]);
+
+  useEffect(() => {
+    if (token) return;
+    checkSetupStatus();
   }, [token]);
 
   useEffect(() => {
@@ -403,6 +458,33 @@ export default function App() {
     };
   }, [detail]);
 
+  const selectedCustomerDue = useMemo(() => {
+    const orders = detail?.orders || [];
+    return orders.reduce((sum, order) => {
+      const totalAmount = Math.max(0, parseNumber(order.total_amount, 0));
+      const paidTotal = Math.max(0, parseNumber(order.paid_total, 0));
+      return sum + Math.max(0, totalAmount - paidTotal);
+    }, 0);
+  }, [detail]);
+
+  const dashboardPendingCount = useMemo(
+    () => adminOrders.filter((order) => order.status === "pending").length,
+    [adminOrders]
+  );
+  const dashboardCompletedCount = useMemo(
+    () => adminOrders.filter((order) => order.status === "completed").length,
+    [adminOrders]
+  );
+  const dashboardDueTotal = useMemo(
+    () =>
+      adminOrders.reduce((sum, order) => {
+        const totalAmount = Math.max(0, parseNumber(order.total_amount, 0));
+        const paidTotal = Math.max(0, parseNumber(order.paid_total, 0));
+        return sum + Math.max(0, totalAmount - paidTotal);
+      }, 0),
+    [adminOrders]
+  );
+
   const stepCompleted = useMemo(
     () => ({
       2: stepSaved[2],
@@ -530,7 +612,16 @@ export default function App() {
       const me = await api("/api/auth/me", {}, token);
       setUser(me.user);
       localStorage.setItem("td_user", JSON.stringify(me.user));
-      await loadCustomers();
+      if (me.user?.role === "admin") {
+        await loadCustomers();
+      } else {
+        setCustomers([]);
+        setSelectedId(null);
+        setDetail(null);
+        setActiveTopView("dashboard");
+        setDashboardSection("orders");
+        await loadAdminOrders();
+      }
     } catch (err) {
       setError(err.message);
       logout();
@@ -589,6 +680,147 @@ export default function App() {
     }
   }
 
+  async function checkSetupStatus() {
+    try {
+      const status = await api("/api/auth/setup-status");
+      setBootstrapNeeded(Boolean(status?.needs_setup));
+    } catch (_err) {
+      setBootstrapNeeded(false);
+    }
+  }
+
+  async function loadAdminUsers() {
+    try {
+      setAdminUsersLoading(true);
+      const list = await api("/api/users", {}, token);
+      setAdminUsers(Array.isArray(list) ? list : []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminUsersLoading(false);
+    }
+  }
+
+  async function loadAdminOrders() {
+    try {
+      setAdminOrdersLoading(true);
+      const list = await api("/api/orders", {}, token);
+      setAdminOrders(Array.isArray(list) ? list : []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminOrdersLoading(false);
+    }
+  }
+
+  function openCreateUserModal() {
+    setUserModalMode("create");
+    setEditingUserId(null);
+    setNewUserDraft({ name: "", email: "", mobile: "", password: "", role: "user" });
+    setShowUserModal(true);
+  }
+
+  function openEditUserModal(userRow) {
+    setUserModalMode("edit");
+    setEditingUserId(userRow.id);
+    setNewUserDraft({
+      name: userRow.name || "",
+      email: userRow.email || "",
+      mobile: userRow.mobile || "",
+      password: "",
+      role: userRow.role || "user"
+    });
+    setShowUserModal(true);
+  }
+
+  async function saveUserCredentials(event) {
+    event.preventDefault();
+    if (!newUserDraft.name || !newUserDraft.email) {
+      setError("Name and email are required.");
+      return;
+    }
+    if (userModalMode === "create" && !newUserDraft.password) {
+      setError("Password is required for new user.");
+      return;
+    }
+
+    try {
+      setError("");
+      if (userModalMode === "create") {
+        await api(
+          "/api/users",
+          {
+            method: "POST",
+            body: JSON.stringify(newUserDraft)
+          },
+          token
+        );
+        setToast({ type: "success", message: "User created." });
+      } else if (editingUserId) {
+        await api(
+          `/api/users/${editingUserId}`,
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              name: newUserDraft.name,
+              email: newUserDraft.email,
+              mobile: newUserDraft.mobile,
+              role: newUserDraft.role,
+              password: newUserDraft.password || undefined
+            })
+          },
+          token
+        );
+        setToast({ type: "success", message: "User credentials updated." });
+      }
+      setShowUserModal(false);
+      setNewUserDraft({ name: "", email: "", mobile: "", password: "", role: "user" });
+      await loadAdminUsers();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function deleteUser(userRow) {
+    if (!userRow?.id) return;
+    const confirmed = window.confirm(`Delete user ${userRow.name || userRow.email}?`);
+    if (!confirmed) return;
+    try {
+      setError("");
+      await api(`/api/users/${userRow.id}`, { method: "DELETE" }, token);
+      setToast({ type: "success", message: "User deleted." });
+      await loadAdminUsers();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleSetupAdmin(event) {
+    event.preventDefault();
+    try {
+      setLoading(true);
+      setError("");
+      const data = await api("/api/auth/setup-admin", {
+        method: "POST",
+        body: JSON.stringify({
+          name: setupName,
+          email: setupEmail,
+          mobile: setupMobile,
+          password: setupPassword
+        })
+      });
+      setToken(data.token);
+      setUser(data.user);
+      localStorage.setItem("td_token", data.token);
+      localStorage.setItem("td_user", JSON.stringify(data.user));
+      setBootstrapNeeded(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function logout() {
     setToken("");
     setUser(null);
@@ -597,6 +829,58 @@ export default function App() {
     setDetail(null);
     localStorage.removeItem("td_token");
     localStorage.removeItem("td_user");
+  }
+
+  function openProfileModal() {
+    setShowProfileMenu(false);
+    setProfileError("");
+    setProfileDraft({
+      name: user?.name || "",
+      email: user?.email || "",
+      mobile: user?.mobile || "",
+      current_password: "",
+      new_password: "",
+      confirm_password: ""
+    });
+    setShowProfileModal(true);
+  }
+
+  async function updateCredentials(event) {
+    event.preventDefault();
+    if (!profileDraft.name.trim() || !profileDraft.email.trim() || !profileDraft.current_password.trim()) {
+      setProfileError("Name, email and current password are required.");
+      return;
+    }
+    if (profileDraft.new_password && profileDraft.new_password !== profileDraft.confirm_password) {
+      setProfileError("New password and confirm password must match.");
+      return;
+    }
+
+    try {
+      setProfileError("");
+      const data = await api(
+        "/api/auth/credentials",
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            name: profileDraft.name,
+            email: profileDraft.email,
+            mobile: profileDraft.mobile,
+            current_password: profileDraft.current_password,
+            new_password: profileDraft.new_password || undefined
+          })
+        },
+        token
+      );
+      setToken(data.token);
+      setUser(data.user);
+      localStorage.setItem("td_token", data.token);
+      localStorage.setItem("td_user", JSON.stringify(data.user));
+      setShowProfileModal(false);
+      setToast({ type: "success", message: "Credentials updated." });
+    } catch (err) {
+      setProfileError(err.message);
+    }
   }
 
   async function createCustomer(event) {
@@ -842,23 +1126,50 @@ export default function App() {
               Admins can create orders step-by-step. Users can safely view all records.
             </p>
           </div>
-          <form onSubmit={handleLogin} className="space-y-4 p-10">
-            <h2 className="font-display text-3xl text-ink">Sign in</h2>
+          <form onSubmit={bootstrapNeeded ? handleSetupAdmin : handleLogin} className="space-y-4 p-10">
+            <h2 className="font-display text-3xl text-ink">{bootstrapNeeded ? "Create Admin Account" : "Sign in"}</h2>
+            {bootstrapNeeded ? (
+              <label className="block text-sm font-semibold text-ink">
+                Name
+                <input
+                  required
+                  className="mt-1 w-full rounded-xl border border-brand-300 px-3 py-2 outline-none ring-brand-500 focus:ring"
+                  value={setupName}
+                  onChange={(event) => setSetupName(event.target.value)}
+                />
+              </label>
+            ) : null}
+            {bootstrapNeeded ? (
+              <label className="block text-sm font-semibold text-ink">
+                Mobile
+                <input
+                  className="mt-1 w-full rounded-xl border border-brand-300 px-3 py-2 outline-none ring-brand-500 focus:ring"
+                  value={setupMobile}
+                  onChange={(event) => setSetupMobile(event.target.value)}
+                />
+              </label>
+            ) : null}
             <label className="block text-sm font-semibold text-ink">
               Email
               <input
+                required
                 className="mt-1 w-full rounded-xl border border-brand-300 px-3 py-2 outline-none ring-brand-500 focus:ring"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                value={bootstrapNeeded ? setupEmail : email}
+                onChange={(event) =>
+                  bootstrapNeeded ? setSetupEmail(event.target.value) : setEmail(event.target.value)
+                }
               />
             </label>
             <label className="block text-sm font-semibold text-ink">
               Password
               <input
+                required
                 type="password"
                 className="mt-1 w-full rounded-xl border border-brand-300 px-3 py-2 outline-none ring-brand-500 focus:ring"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                value={bootstrapNeeded ? setupPassword : password}
+                onChange={(event) =>
+                  bootstrapNeeded ? setSetupPassword(event.target.value) : setPassword(event.target.value)
+                }
               />
             </label>
             {error ? <p className="rounded-lg bg-red-50 p-2 text-sm text-red-700">{error}</p> : null}
@@ -866,7 +1177,7 @@ export default function App() {
               disabled={loading}
               className="w-full rounded-xl bg-brand-700 px-4 py-2 font-semibold text-white transition hover:bg-brand-900 disabled:opacity-50"
             >
-              {loading ? "Signing in..." : "Sign in"}
+              {loading ? "Please wait..." : bootstrapNeeded ? "Create Admin" : "Sign in"}
             </button>
           </form>
         </section>
@@ -881,11 +1192,241 @@ export default function App() {
           <h1 className="font-display text-3xl">TailorDesk</h1>
           <p className="text-sm text-brand-50">Signed in as {user?.name} ({user?.role})</p>
         </div>
-        <button onClick={logout} className="rounded-lg bg-white/20 px-4 py-2 text-sm font-semibold text-white ring-1 ring-white/40">
-          Logout
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTopView("dashboard")}
+            className={`rounded-lg px-3 py-2 text-sm font-semibold ring-1 ring-white/40 ${
+              activeTopView === "dashboard" ? "bg-white text-brand-900" : "bg-white/20 text-white"
+            }`}
+          >
+            Dashboard
+          </button>
+          {isAdmin ? (
+            <button
+              type="button"
+              onClick={() => setActiveTopView("workspace")}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold ring-1 ring-white/40 ${
+                activeTopView === "workspace" ? "bg-white text-brand-900" : "bg-white/20 text-white"
+              }`}
+            >
+              Workspace
+            </button>
+          ) : null}
+          <div className="relative">
+          <button
+            type="button"
+            onClick={() => setShowProfileMenu((prev) => !prev)}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-white/20 text-white ring-1 ring-white/40"
+            title="Profile"
+            aria-label="Profile"
+          >
+            <svg viewBox="0 0 24 24" className="h-5 w-5 fill-none stroke-current" strokeWidth="1.8">
+              <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z" />
+              <path d="M4.5 19.5a7.5 7.5 0 0 1 15 0" />
+            </svg>
+          </button>
+
+          {showProfileMenu ? (
+            <div className="absolute right-0 top-12 z-20 w-52 rounded-xl border border-brand-200 bg-white p-2 text-ink shadow-2xl">
+              <button
+                type="button"
+                onClick={openProfileModal}
+                className="w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-brand-50"
+              >
+                Change Credentials
+              </button>
+              <button
+                type="button"
+                onClick={logout}
+                className="mt-1 w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-red-700 transition hover:bg-red-50"
+              >
+                Logout
+              </button>
+            </div>
+              ) : null}
+          </div>
+        </div>
       </header>
 
+      {activeTopView === "dashboard" ? (
+        <section className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[260px_1fr]">
+          <aside className="min-h-0 overflow-y-auto rounded-2xl bg-white/95 p-4 shadow-2xl ring-1 ring-white/70 backdrop-blur">
+            <h2 className="font-display text-2xl text-ink">Admin Panel</h2>
+            <div className="mt-3 space-y-2">
+              {(isAdmin
+                ? [
+                    ["overview", "Overview"],
+                    ["users", "Manage Users"],
+                    ["customers", "Manage Customers"],
+                    ["orders", "Manage Orders"],
+                    ["payments", "Payments"]
+                  ]
+                : [["orders", "Orders"]]
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setDashboardSection(key)}
+                  className={`w-full rounded-xl px-3 py-2 text-left text-sm font-semibold ${
+                    dashboardSection === key ? "bg-brand-700 text-white" : "bg-brand-50 text-brand-900"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <section className="min-h-0 overflow-y-auto rounded-2xl bg-white/95 p-4 shadow-2xl ring-1 ring-white/70 backdrop-blur">
+            {dashboardSection === "overview" ? (
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Customers</p>
+                  <p className="mt-2 text-3xl font-bold text-ink">{customers.length}</p>
+                </article>
+                <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pending Orders</p>
+                  <p className="mt-2 text-3xl font-bold text-ink">{dashboardPendingCount}</p>
+                </article>
+                <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Completed Orders</p>
+                  <p className="mt-2 text-3xl font-bold text-ink">{dashboardCompletedCount}</p>
+                </article>
+                <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pending Due</p>
+                  <p className="mt-2 text-3xl font-bold text-orange-700">{money(dashboardDueTotal)}</p>
+                </article>
+              </div>
+            ) : null}
+
+            {dashboardSection === "users" ? (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-brand-100 bg-brand-50 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-lg font-bold text-ink">Manage Users</h3>
+                    <button
+                      type="button"
+                      onClick={openCreateUserModal}
+                      className="rounded-lg bg-brand-700 px-3 py-2 text-sm font-semibold text-white"
+                    >
+                      Add User
+                    </button>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200">
+                  <div className="border-b border-slate-200 px-4 py-3 font-semibold">Users</div>
+                  <div className="max-h-[420px] overflow-y-auto">
+                    {adminUsersLoading ? (
+                      <p className="p-4 text-sm text-slate-600">Loading users...</p>
+                    ) : adminUsers.length === 0 ? (
+                      <p className="p-4 text-sm text-slate-600">No users found.</p>
+                    ) : (
+                      adminUsers.map((row) => (
+                        <div key={row.id} className="flex items-center justify-between border-b border-slate-100 px-4 py-2 text-sm">
+                          <div>
+                            <p className="font-semibold text-ink">{row.name}</p>
+                            <p className="text-xs text-slate-600">{row.email} {row.mobile ? `| ${row.mobile}` : ""}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                              {row.role}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => openEditUserModal(row)}
+                              className="rounded-md bg-brand-50 px-2 py-1 text-xs font-semibold text-brand-900"
+                            >
+                              Modify
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteUser(row)}
+                              className="rounded-md bg-red-100 px-2 py-1 text-xs font-semibold text-red-700"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {dashboardSection === "customers" ? (
+              <div className="space-y-2">
+                <h3 className="text-lg font-bold text-ink">Customers</h3>
+                <p className="text-sm text-slate-600">Use Workspace for full customer/order flow.</p>
+                <div className="max-h-[470px] overflow-y-auto rounded-xl border border-slate-200">
+                  {customers.map((customer) => (
+                    <button
+                      key={customer.id}
+                      type="button"
+                      onClick={() => {
+                        selectCustomer(customer.id);
+                        setActiveTopView("workspace");
+                      }}
+                      className="flex w-full items-center justify-between border-b border-slate-100 px-4 py-2 text-left text-sm hover:bg-brand-50"
+                    >
+                      <span className="font-semibold text-ink">{customer.name}</span>
+                      <span className="text-xs text-slate-600">{customer.phone || "No phone"}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {dashboardSection === "orders" ? (
+              <div className="space-y-2">
+                <h3 className="text-lg font-bold text-ink">Orders</h3>
+                <div className="max-h-[500px] space-y-2 overflow-y-auto">
+                  {adminOrdersLoading ? (
+                    <p className="text-sm text-slate-600">Loading orders...</p>
+                  ) : adminOrders.length === 0 ? (
+                    <p className="text-sm text-slate-600">No orders found.</p>
+                  ) : (
+                    adminOrders.map((order) => (
+                      <div key={order.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                        <p className="font-semibold text-ink">#{order.id} {order.customer_name} ({order.status})</p>
+                        <p className="text-xs text-slate-600">
+                          Total: {money(order.total_amount)} | Paid: {money(order.paid_total)} | Due:{" "}
+                          {money(Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0)))}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : null}
+
+            {dashboardSection === "payments" ? (
+              <div className="space-y-2">
+                <h3 className="text-lg font-bold text-ink">Payments / Due Tracker</h3>
+                <div className="max-h-[500px] space-y-2 overflow-y-auto">
+                  {adminOrdersLoading ? (
+                    <p className="text-sm text-slate-600">Loading payment data...</p>
+                  ) : (
+                    adminOrders.map((order) => {
+                      const due = Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0));
+                      return (
+                        <div key={order.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                          <p className="font-semibold text-ink">#{order.id} {order.customer_name}</p>
+                          <p className="text-xs text-slate-600">
+                            Paid: {money(order.paid_total)} | Remaining Due: {money(due)}
+                          </p>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </section>
+        </section>
+      ) : (
+        <>
       {error ? <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       <section className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[320px_1fr]">
         <aside className="flex min-h-0 flex-col gap-4 rounded-2xl bg-white/95 p-4 shadow-2xl ring-1 ring-white/70 backdrop-blur">
@@ -1504,6 +2045,8 @@ export default function App() {
           )}
         </section>
       </section>
+        </>
+      )}
 
       {showOrdersModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
@@ -1687,6 +2230,173 @@ export default function App() {
                 Cancel
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showUserModal ? (
+        <div className="fixed inset-0 z-[66] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl">
+            <h3 className="font-display text-2xl text-ink">
+              {userModalMode === "create" ? "Add User" : "Modify Credentials"}
+            </h3>
+            <form onSubmit={saveUserCredentials} className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Name
+                <input
+                  required
+                  value={newUserDraft.name}
+                  onChange={(event) => setNewUserDraft((prev) => ({ ...prev, name: event.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Email
+                <input
+                  required
+                  value={newUserDraft.email}
+                  onChange={(event) => setNewUserDraft((prev) => ({ ...prev, email: event.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Mobile
+                <input
+                  value={newUserDraft.mobile}
+                  onChange={(event) => setNewUserDraft((prev) => ({ ...prev, mobile: event.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Role
+                <select
+                  value={newUserDraft.role}
+                  onChange={(event) => setNewUserDraft((prev) => ({ ...prev, role: event.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                >
+                  <option value="user">User</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+              <label className="sm:col-span-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                {userModalMode === "create" ? "Password" : "New Password (Optional)"}
+                <input
+                  type="password"
+                  required={userModalMode === "create"}
+                  value={newUserDraft.password}
+                  onChange={(event) => setNewUserDraft((prev) => ({ ...prev, password: event.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </label>
+              <div className="sm:col-span-2 mt-1 flex gap-2">
+                <button
+                  type="submit"
+                  className="rounded-lg bg-brand-700 px-3 py-1.5 text-sm font-semibold text-white"
+                >
+                  {userModalMode === "create" ? "Create User" : "Save Changes"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowUserModal(false)}
+                  className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {showProfileModal ? (
+        <div className="fixed inset-0 z-[66] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl">
+            <h3 className="font-display text-2xl text-ink">Change Credentials</h3>
+            <form onSubmit={updateCredentials} className="mt-3 space-y-3">
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Name
+                <input
+                  required
+                  value={profileDraft.name}
+                  onChange={(event) => setProfileDraft((prev) => ({ ...prev, name: event.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </label>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Email
+                <input
+                  required
+                  value={profileDraft.email}
+                  onChange={(event) => setProfileDraft((prev) => ({ ...prev, email: event.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </label>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Mobile
+                <input
+                  value={profileDraft.mobile}
+                  onChange={(event) => setProfileDraft((prev) => ({ ...prev, mobile: event.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </label>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Current Password
+                <input
+                  required
+                  type="password"
+                  value={profileDraft.current_password}
+                  onChange={(event) =>
+                    setProfileDraft((prev) => ({ ...prev, current_password: event.target.value }))
+                  }
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </label>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                New Password
+                <input
+                  type="password"
+                  value={profileDraft.new_password}
+                  onChange={(event) =>
+                    setProfileDraft((prev) => ({ ...prev, new_password: event.target.value }))
+                  }
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </label>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Confirm New Password
+                <input
+                  type="password"
+                  value={profileDraft.confirm_password}
+                  onChange={(event) =>
+                    setProfileDraft((prev) => ({ ...prev, confirm_password: event.target.value }))
+                  }
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                />
+              </label>
+              {profileError ? (
+                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                  {profileError}
+                </p>
+              ) : null}
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="submit"
+                  className="rounded-lg bg-brand-700 px-3 py-1.5 text-sm font-semibold text-white"
+                >
+                  Save Credentials
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProfileModal(false);
+                    setProfileError("");
+                  }}
+                  className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       ) : null}

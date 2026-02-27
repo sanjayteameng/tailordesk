@@ -1,6 +1,5 @@
 ﻿const fs = require("fs");
 const path = require("path");
-const bcrypt = require("bcryptjs");
 const Database = require("better-sqlite3");
 
 const dataDir = path.join(__dirname, "..", "data");
@@ -30,6 +29,7 @@ function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
+      mobile TEXT,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('admin', 'user')),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -172,6 +172,7 @@ function initDb() {
   );
   addColumnIfMissing("orders", "discount_value", "discount_value REAL NOT NULL DEFAULT 0");
   addColumnIfMissing("orders", "remaining_due", "remaining_due REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing("users", "mobile", "mobile TEXT");
 
   db.exec(`
     UPDATE orders
@@ -209,18 +210,6 @@ function initDb() {
     );
   `);
 
-  const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || "admin@tailordesk.local";
-  const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || "Admin@123";
-  const adminName = process.env.DEFAULT_ADMIN_NAME || "Primary Admin";
-
-  const existingAdmin = db.prepare("SELECT id FROM users WHERE email = ?").get(adminEmail);
-  if (!existingAdmin) {
-    const passwordHash = bcrypt.hashSync(adminPassword, 10);
-    db.prepare(
-      "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'admin')"
-    ).run(adminName, adminEmail, passwordHash);
-    console.log(`Seeded default admin user: ${adminEmail}`);
-  }
 }
 
 module.exports = { db, initDb, ORDER_STATUSES };
