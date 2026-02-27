@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const GARMENT_TYPES = ["Shirt", "Pant", "Suit", "Blouse", "Kurti", "Other"];
@@ -251,6 +251,7 @@ export default function App() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [activeTopView, setActiveTopView] = useState("workspace");
   const [dashboardSection, setDashboardSection] = useState("overview");
+  const [paymentsDashboardTab, setPaymentsDashboardTab] = useState("due");
   const [profileError, setProfileError] = useState("");
   const [profileDraft, setProfileDraft] = useState({
     name: "",
@@ -284,6 +285,7 @@ export default function App() {
   const [showUserModal, setShowUserModal] = useState(false);
   const [userModalMode, setUserModalMode] = useState("create");
   const [editingUserId, setEditingUserId] = useState(null);
+  const profileMenuRef = useRef(null);
 
   const isAdmin = user?.role === "admin";
 
@@ -309,6 +311,25 @@ export default function App() {
     setActiveTopView("dashboard");
     setDashboardSection("orders");
   }, [token, isAdmin]);
+
+  useEffect(() => {
+    if (!showProfileMenu) return;
+    function onPointerDown(event) {
+      if (!profileMenuRef.current) return;
+      if (!profileMenuRef.current.contains(event.target)) {
+        setShowProfileMenu(false);
+      }
+    }
+    function onEsc(event) {
+      if (event.key === "Escape") setShowProfileMenu(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [showProfileMenu]);
 
   useEffect(() => {
     if (token) return;
@@ -822,6 +843,8 @@ export default function App() {
   }
 
   function logout() {
+    setShowProfileMenu(false);
+    setShowProfileModal(false);
     setToken("");
     setUser(null);
     setCustomers([]);
@@ -1052,7 +1075,11 @@ export default function App() {
         token
       );
       setToast({ type: "success", message: "Order marked as completed." });
-      await loadCustomerDetail(selectedId);
+      if (selectedId) {
+        await loadCustomerDetail(selectedId);
+      } else {
+        await loadAdminOrders();
+      }
     } catch (err) {
       setError(err.message);
     }
@@ -1074,7 +1101,7 @@ export default function App() {
   }
 
   async function collectDueAndComplete() {
-    if (!completionModalOrder || !selectedId) return;
+    if (!completionModalOrder) return;
 
     try {
       setError("");
@@ -1107,7 +1134,11 @@ export default function App() {
         type: "success",
         message: "Due settled. Order marked as completed."
       });
-      await loadCustomerDetail(selectedId);
+      if (selectedId) {
+        await loadCustomerDetail(selectedId);
+      } else {
+        await loadAdminOrders();
+      }
     } catch (err) {
       setError(err.message);
     }
@@ -1213,7 +1244,7 @@ export default function App() {
               Workspace
             </button>
           ) : null}
-          <div className="relative">
+          <div ref={profileMenuRef} className="relative">
           <button
             type="button"
             onClick={() => setShowProfileMenu((prev) => !prev)}
@@ -1252,7 +1283,12 @@ export default function App() {
       {activeTopView === "dashboard" ? (
         <section className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[260px_1fr]">
           <aside className="min-h-0 overflow-y-auto rounded-2xl bg-white/95 p-4 shadow-2xl ring-1 ring-white/70 backdrop-blur">
-            <h2 className="font-display text-2xl text-ink">Admin Panel</h2>
+            <h2 className="font-display text-2xl text-ink">{isAdmin ? "Admin Panel" : "User Panel"}</h2>
+            {!isAdmin ? (
+              <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                You are a normal user. You can only view data.
+              </p>
+            ) : null}
             <div className="mt-3 space-y-2">
               {(isAdmin
                 ? [
@@ -1381,22 +1417,62 @@ export default function App() {
             {dashboardSection === "orders" ? (
               <div className="space-y-2">
                 <h3 className="text-lg font-bold text-ink">Orders</h3>
-                <div className="max-h-[500px] space-y-2 overflow-y-auto">
-                  {adminOrdersLoading ? (
-                    <p className="text-sm text-slate-600">Loading orders...</p>
-                  ) : adminOrders.length === 0 ? (
-                    <p className="text-sm text-slate-600">No orders found.</p>
-                  ) : (
-                    adminOrders.map((order) => (
-                      <div key={order.id} className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="font-semibold text-ink">#{order.id} {order.customer_name} ({order.status})</p>
-                        <p className="text-xs text-slate-600">
-                          Total: {money(order.total_amount)} | Paid: {money(order.paid_total)} | Due:{" "}
-                          {money(Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0)))}
-                        </p>
-                      </div>
-                    ))
-                  )}
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="rounded-xl border border-orange-200 bg-orange-50/60 p-3">
+                    <h4 className="text-sm font-bold text-orange-700">Pending Orders</h4>
+                    <div className="mt-2 max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                      {adminOrdersLoading ? (
+                        <p className="text-sm text-slate-600">Loading orders...</p>
+                      ) : adminOrders.filter((order) => order.status === "pending").length === 0 ? (
+                        <p className="text-sm text-slate-600">No pending orders.</p>
+                      ) : (
+                        adminOrders
+                          .filter((order) => order.status === "pending")
+                          .map((order) => (
+                            <div key={order.id} className="rounded-xl border border-orange-200 bg-white p-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="font-semibold text-ink">#{order.id} {order.customer_name}</p>
+                                {isAdmin ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => startOrderCompletion(order)}
+                                    className="rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white"
+                                  >
+                                    Mark Completed
+                                  </button>
+                                ) : null}
+                              </div>
+                              <p className="text-xs text-slate-600">
+                                Total: {money(order.total_amount)} | Paid: {money(order.paid_total)} | Due:{" "}
+                                {money(Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0)))}
+                              </p>
+                            </div>
+                          ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                    <h4 className="text-sm font-bold text-emerald-700">Completed Orders</h4>
+                    <div className="mt-2 max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                      {adminOrdersLoading ? (
+                        <p className="text-sm text-slate-600">Loading orders...</p>
+                      ) : adminOrders.filter((order) => order.status === "completed").length === 0 ? (
+                        <p className="text-sm text-slate-600">No completed orders.</p>
+                      ) : (
+                        adminOrders
+                          .filter((order) => order.status === "completed")
+                          .map((order) => (
+                            <div key={order.id} className="rounded-xl border border-emerald-200 bg-white p-3">
+                              <p className="font-semibold text-ink">#{order.id} {order.customer_name}</p>
+                              <p className="text-xs text-slate-600">
+                                Total: {money(order.total_amount)} | Paid: {money(order.paid_total)}
+                              </p>
+                            </div>
+                          ))
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -1404,15 +1480,54 @@ export default function App() {
             {dashboardSection === "payments" ? (
               <div className="space-y-2">
                 <h3 className="text-lg font-bold text-ink">Payments / Due Tracker</h3>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentsDashboardTab("due")}
+                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                      paymentsDashboardTab === "due" ? "bg-orange-600 text-white" : "bg-slate-100 text-slate-700"
+                    }`}
+                  >
+                    Due
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentsDashboardTab("settled")}
+                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                      paymentsDashboardTab === "settled"
+                        ? "bg-emerald-600 text-white"
+                        : "bg-slate-100 text-slate-700"
+                    }`}
+                  >
+                    Settled
+                  </button>
+                </div>
                 <div className="max-h-[500px] space-y-2 overflow-y-auto">
                   {adminOrdersLoading ? (
                     <p className="text-sm text-slate-600">Loading payment data...</p>
                   ) : (
-                    adminOrders.map((order) => {
+                    adminOrders
+                      .filter((order) => {
+                        const due = Math.max(
+                          0,
+                          parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0)
+                        );
+                        return paymentsDashboardTab === "due" ? due > 0 : due <= 0;
+                      })
+                      .map((order) => {
                       const due = Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0));
                       return (
                         <div key={order.id} className="rounded-xl border border-slate-200 bg-white p-3">
-                          <p className="font-semibold text-ink">#{order.id} {order.customer_name}</p>
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="font-semibold text-ink">#{order.id} {order.customer_name}</p>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                due > 0 ? "bg-orange-100 text-orange-700" : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {due > 0 ? "Due" : "Settled"}
+                            </span>
+                          </div>
                           <p className="text-xs text-slate-600">
                             Paid: {money(order.paid_total)} | Remaining Due: {money(due)}
                           </p>
