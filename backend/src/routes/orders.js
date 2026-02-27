@@ -427,6 +427,11 @@ router.put("/:id", authorizeRoles("admin"), (req, res) => {
 
   const nextTotalAmount = Math.max(0, asNumber(total_amount, existing.total_amount));
   const nextAdvancePaid = Math.max(0, asNumber(advance_paid, existing.advance_paid));
+  const becameCompleted = existing.status !== "completed" && nextStatus === "completed";
+  const resolvedDeliveryDate =
+    delivery_date === ""
+      ? null
+      : delivery_date ?? (becameCompleted ? new Date().toISOString() : existing.delivery_date);
   if (nextStatus === "completed") {
     const additionalPayments = Math.max(0, getOrderPaidTotal(orderId) - Math.max(0, asNumber(existing.advance_paid, 0)));
     const paidTotal = nextAdvancePaid + additionalPayments;
@@ -451,7 +456,7 @@ router.put("/:id", authorizeRoles("admin"), (req, res) => {
       nextTotalAmount,
       nextAdvancePaid,
       due_date === "" ? null : due_date ?? existing.due_date,
-      delivery_date === "" ? null : delivery_date ?? existing.delivery_date,
+      resolvedDeliveryDate,
       notes === "" ? null : notes ?? existing.notes,
       orderId
     );

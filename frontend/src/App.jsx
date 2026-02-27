@@ -197,9 +197,19 @@ function parseNumber(value, fallback = 0) {
 
 function formatDateTime(value) {
   if (!value) return "-";
-  const parsed = new Date(value);
+  const raw = String(value).trim();
+  const sqliteUtcPattern = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+  const parsed = sqliteUtcPattern.test(raw)
+    ? new Date(raw.replace(" ", "T") + "Z")
+    : new Date(raw);
   if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleString("en-IN");
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function todayIsoDate() {
@@ -1293,10 +1303,10 @@ export default function App() {
               {(isAdmin
                 ? [
                     ["overview", "Overview"],
-                    ["users", "Manage Users"],
-                    ["customers", "Manage Customers"],
                     ["orders", "Manage Orders"],
-                    ["payments", "Payments"]
+                    ["payments", "Payments"],
+                    ["customers", "Manage Customers"],
+                    ["users", "Manage Users"]
                   ]
                 : [["orders", "Orders"]]
               ).map(([key, label]) => (
@@ -1442,10 +1452,34 @@ export default function App() {
                                   </button>
                                 ) : null}
                               </div>
-                              <p className="text-xs text-slate-600">
-                                Total: {money(order.total_amount)} | Paid: {money(order.paid_total)} | Due:{" "}
-                                {money(Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0)))}
-                              </p>
+                              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                  <p className="text-slate-500">Total</p>
+                                  <p className="font-semibold text-ink">{money(order.total_amount)}</p>
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                  <p className="text-slate-500">Paid</p>
+                                  <p className="font-semibold text-ink">{money(order.paid_total)}</p>
+                                </div>
+                                <div className="rounded-lg border border-orange-200 bg-orange-50 px-2 py-1.5">
+                                  <p className="text-orange-600">Due</p>
+                                  <p className="font-semibold text-orange-700">
+                                    {money(
+                                      Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0))
+                                    )}
+                                  </p>
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                  <p className="text-slate-500">Order Taken</p>
+                                  <p className="font-semibold text-ink">{formatDateTime(order.created_at)}</p>
+                                </div>
+                                <div className="col-span-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                  <p className="text-slate-500">Delivery</p>
+                                  <p className="font-semibold text-ink">
+                                    {order.delivery_date ? formatDateTime(order.delivery_date) : "Not set"}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
                           ))
                       )}
@@ -1465,9 +1499,26 @@ export default function App() {
                           .map((order) => (
                             <div key={order.id} className="rounded-xl border border-emerald-200 bg-white p-3">
                               <p className="font-semibold text-ink">#{order.id} {order.customer_name}</p>
-                              <p className="text-xs text-slate-600">
-                                Total: {money(order.total_amount)} | Paid: {money(order.paid_total)}
-                              </p>
+                              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                  <p className="text-slate-500">Total</p>
+                                  <p className="font-semibold text-ink">{money(order.total_amount)}</p>
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                  <p className="text-slate-500">Paid</p>
+                                  <p className="font-semibold text-ink">{money(order.paid_total)}</p>
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                  <p className="text-slate-500">Order Taken</p>
+                                  <p className="font-semibold text-ink">{formatDateTime(order.created_at)}</p>
+                                </div>
+                                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5">
+                                  <p className="text-emerald-600">Delivered</p>
+                                  <p className="font-semibold text-emerald-700">
+                                    {order.delivery_date ? formatDateTime(order.delivery_date) : "Not set"}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
                           ))
                       )}
@@ -1528,9 +1579,26 @@ export default function App() {
                               {due > 0 ? "Due" : "Settled"}
                             </span>
                           </div>
-                          <p className="text-xs text-slate-600">
-                            Paid: {money(order.paid_total)} | Remaining Due: {money(due)}
-                          </p>
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                              <p className="text-slate-500">Paid</p>
+                              <p className="font-semibold text-ink">{money(order.paid_total)}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                              <p className="text-slate-500">Remaining Due</p>
+                              <p className="font-semibold text-ink">{money(due)}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                              <p className="text-slate-500">Order Taken</p>
+                              <p className="font-semibold text-ink">{formatDateTime(order.created_at)}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                              <p className="text-slate-500">Delivery</p>
+                              <p className="font-semibold text-ink">
+                                {order.delivery_date ? formatDateTime(order.delivery_date) : "Not set"}
+                              </p>
+                            </div>
+                          </div>
                         </div>
                       );
                     })
@@ -2228,18 +2296,41 @@ export default function App() {
                           </button>
                         ) : null}
                       </div>
-                      <p className="text-xs text-slate-700">
-                        Total: {money(order.total_amount)} | Paid: {money(order.paid_total)} | Created:{" "}
-                        {formatDateTime(order.created_at)}
-                      </p>
-                      {ordersModalTab === "current" ? (
-                        <p className="text-xs font-semibold text-orange-700">
-                          Due:{" "}
-                          {money(
-                            Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0))
-                          )}
-                        </p>
-                      ) : null}
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                        <div className="rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                          <p className="text-slate-500">Total</p>
+                          <p className="font-semibold text-ink">{money(order.total_amount)}</p>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                          <p className="text-slate-500">Paid</p>
+                          <p className="font-semibold text-ink">{money(order.paid_total)}</p>
+                        </div>
+                        {ordersModalTab === "current" ? (
+                          <div className="rounded-lg border border-orange-200 bg-orange-50 px-2 py-1.5">
+                            <p className="text-orange-600">Due</p>
+                            <p className="font-semibold text-orange-700">
+                              {money(
+                                Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0))
+                              )}
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5">
+                            <p className="text-emerald-600">Status</p>
+                            <p className="font-semibold text-emerald-700">Settled</p>
+                          </div>
+                        )}
+                        <div className="rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                          <p className="text-slate-500">Order Taken</p>
+                          <p className="font-semibold text-ink">{formatDateTime(order.created_at)}</p>
+                        </div>
+                        <div className="col-span-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                          <p className="text-slate-500">Delivered Date</p>
+                          <p className="font-semibold text-ink">
+                            {order.delivery_date ? formatDateTime(order.delivery_date) : "Not set"}
+                          </p>
+                        </div>
+                      </div>
                       {Array.isArray(order.items) && order.items.length > 0 ? (
                         <div className="mt-1 space-y-1">
                           {order.items.map((item) => (
