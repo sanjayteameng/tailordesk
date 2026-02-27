@@ -1324,7 +1324,7 @@ export default function App() {
             </div>
           </aside>
 
-          <section className="min-h-0 overflow-y-auto rounded-2xl bg-white/95 p-4 shadow-2xl ring-1 ring-white/70 backdrop-blur">
+          <section className="flex h-full min-h-0 flex-col overflow-y-auto rounded-2xl bg-white/95 p-4 shadow-2xl ring-1 ring-white/70 backdrop-blur">
             {dashboardSection === "overview" ? (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
@@ -1425,12 +1425,12 @@ export default function App() {
             ) : null}
 
             {dashboardSection === "orders" ? (
-              <div className="space-y-2">
+              <div className="flex min-h-0 flex-1 flex-col gap-2">
                 <h3 className="text-lg font-bold text-ink">Orders</h3>
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <div className="rounded-xl border border-orange-200 bg-orange-50/60 p-3">
+                <div className="grid flex-1 min-h-0 gap-4 lg:grid-cols-2">
+                  <div className="flex min-h-0 flex-col rounded-xl border border-orange-200 bg-orange-50/60 p-3">
                     <h4 className="text-sm font-bold text-orange-700">Pending Orders</h4>
-                    <div className="mt-2 max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                    <div className="mt-2 flex-1 min-h-0 space-y-2 overflow-y-auto pr-1">
                       {adminOrdersLoading ? (
                         <p className="text-sm text-slate-600">Loading orders...</p>
                       ) : adminOrders.filter((order) => order.status === "pending").length === 0 ? (
@@ -1486,9 +1486,9 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                  <div className="flex min-h-0 flex-col rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
                     <h4 className="text-sm font-bold text-emerald-700">Completed Orders</h4>
-                    <div className="mt-2 max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                    <div className="mt-2 flex-1 min-h-0 space-y-2 overflow-y-auto pr-1">
                       {adminOrdersLoading ? (
                         <p className="text-sm text-slate-600">Loading orders...</p>
                       ) : adminOrders.filter((order) => order.status === "completed").length === 0 ? (
@@ -1529,80 +1529,114 @@ export default function App() {
             ) : null}
 
             {dashboardSection === "payments" ? (
-              <div className="space-y-2">
+              <div className="flex min-h-0 flex-1 flex-col gap-2">
                 <h3 className="text-lg font-bold text-ink">Payments / Due Tracker</h3>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setPaymentsDashboardTab("due")}
-                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
-                      paymentsDashboardTab === "due" ? "bg-orange-600 text-white" : "bg-slate-100 text-slate-700"
-                    }`}
-                  >
-                    Due
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPaymentsDashboardTab("settled")}
-                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
-                      paymentsDashboardTab === "settled"
-                        ? "bg-emerald-600 text-white"
-                        : "bg-slate-100 text-slate-700"
-                    }`}
-                  >
-                    Settled
-                  </button>
-                </div>
-                <div className="max-h-[500px] space-y-2 overflow-y-auto">
-                  {adminOrdersLoading ? (
-                    <p className="text-sm text-slate-600">Loading payment data...</p>
-                  ) : (
-                    adminOrders
-                      .filter((order) => {
-                        const due = Math.max(
-                          0,
-                          parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0)
-                        );
-                        return paymentsDashboardTab === "due" ? due > 0 : due <= 0;
-                      })
-                      .map((order) => {
-                      const due = Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0));
-                      return (
-                        <div key={order.id} className="rounded-xl border border-slate-200 bg-white p-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="font-semibold text-ink">#{order.id} {order.customer_name}</p>
-                            <span
-                              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                due > 0 ? "bg-orange-100 text-orange-700" : "bg-emerald-100 text-emerald-700"
-                              }`}
-                            >
-                              {due > 0 ? "Due" : "Settled"}
-                            </span>
-                          </div>
-                          <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
-                              <p className="text-slate-500">Paid</p>
-                              <p className="font-semibold text-ink">{money(order.paid_total)}</p>
+                <div className="grid flex-1 min-h-0 gap-4 lg:grid-cols-2">
+                  <div className="flex min-h-0 flex-col rounded-xl border border-orange-200 bg-orange-50/60 p-3">
+                    <h4 className="text-sm font-bold text-orange-700">Due</h4>
+                    <div className="mt-2 flex-1 min-h-0 space-y-2 overflow-y-auto pr-1">
+                      {adminOrdersLoading ? (
+                        <p className="text-sm text-slate-600">Loading payment data...</p>
+                      ) : adminOrders.filter((order) => {
+                          const due = Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0));
+                          return due > 0;
+                        }).length === 0 ? (
+                        <p className="text-sm text-slate-600">No due payments.</p>
+                      ) : (
+                        adminOrders
+                          .filter((order) => {
+                            const due = Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0));
+                            return due > 0;
+                          })
+                          .map((order) => {
+                            const due = Math.max(
+                              0,
+                              parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0)
+                            );
+                            return (
+                              <div key={order.id} className="rounded-xl border border-orange-200 bg-white p-3">
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="font-semibold text-ink">#{order.id} {order.customer_name}</p>
+                                  <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-700">
+                                    Due
+                                  </span>
+                                </div>
+                                <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                    <p className="text-slate-500">Paid</p>
+                                    <p className="font-semibold text-ink">{money(order.paid_total)}</p>
+                                  </div>
+                                  <div className="rounded-lg border border-orange-200 bg-orange-50 px-2 py-1.5">
+                                    <p className="text-orange-600">Remaining Due</p>
+                                    <p className="font-semibold text-orange-700">{money(due)}</p>
+                                  </div>
+                                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                    <p className="text-slate-500">Order Taken</p>
+                                    <p className="font-semibold text-ink">{formatDateTime(order.created_at)}</p>
+                                  </div>
+                                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                    <p className="text-slate-500">Delivery</p>
+                                    <p className="font-semibold text-ink">
+                                      {order.delivery_date ? formatDateTime(order.delivery_date) : "Not set"}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex min-h-0 flex-col rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                    <h4 className="text-sm font-bold text-emerald-700">Settled / Delivered</h4>
+                    <div className="mt-2 flex-1 min-h-0 space-y-2 overflow-y-auto pr-1">
+                      {adminOrdersLoading ? (
+                        <p className="text-sm text-slate-600">Loading payment data...</p>
+                      ) : adminOrders.filter((order) => {
+                          const due = Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0));
+                          return due <= 0;
+                        }).length === 0 ? (
+                        <p className="text-sm text-slate-600">No settled payments.</p>
+                      ) : (
+                        adminOrders
+                          .filter((order) => {
+                            const due = Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0));
+                            return due <= 0;
+                          })
+                          .map((order) => (
+                            <div key={order.id} className="rounded-xl border border-emerald-200 bg-white p-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="font-semibold text-ink">#{order.id} {order.customer_name}</p>
+                                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                                  Settled
+                                </span>
+                              </div>
+                              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                  <p className="text-slate-500">Paid</p>
+                                  <p className="font-semibold text-ink">{money(order.paid_total)}</p>
+                                </div>
+                                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5">
+                                  <p className="text-emerald-600">Remaining Due</p>
+                                  <p className="font-semibold text-emerald-700">{money(0)}</p>
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                  <p className="text-slate-500">Order Taken</p>
+                                  <p className="font-semibold text-ink">{formatDateTime(order.created_at)}</p>
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                  <p className="text-slate-500">Delivery</p>
+                                  <p className="font-semibold text-ink">
+                                    {order.delivery_date ? formatDateTime(order.delivery_date) : "Not set"}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
-                              <p className="text-slate-500">Remaining Due</p>
-                              <p className="font-semibold text-ink">{money(due)}</p>
-                            </div>
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
-                              <p className="text-slate-500">Order Taken</p>
-                              <p className="font-semibold text-ink">{formatDateTime(order.created_at)}</p>
-                            </div>
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
-                              <p className="text-slate-500">Delivery</p>
-                              <p className="font-semibold text-ink">
-                                {order.delivery_date ? formatDateTime(order.delivery_date) : "Not set"}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
+                          ))
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : null}
