@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import AppToast from "./components/AppToast";
+import StickyStepActions from "./components/StickyStepActions";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const GARMENT_TYPES = ["Shirt", "Pant", "Suit", "Blouse", "Kurti"];
@@ -238,23 +240,6 @@ function parseNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function formatDateTime(value) {
-  if (!value) return "-";
-  const raw = String(value).trim();
-  const sqliteUtcPattern = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
-  const parsed = sqliteUtcPattern.test(raw)
-    ? new Date(raw.replace(" ", "T") + "Z")
-    : new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
-}
-
 function todayDisplayDate() {
   return new Date().toLocaleDateString("en-GB");
 }
@@ -298,6 +283,10 @@ function getStepState(stepId, wizardStep, stepCompleted) {
   if (wizardStep === stepId) return "active";
   if (stepCompleted[stepId]) return "done";
   return "idle";
+}
+
+function displayGarmentType(type) {
+  return GARMENT_DISPLAY_LABELS[String(type || "").trim()] || String(type || "");
 }
 
 export default function App() {
@@ -353,6 +342,7 @@ export default function App() {
   const [completionMethod, setCompletionMethod] = useState("cash");
   const [completionNote, setCompletionNote] = useState("");
   const [deliverySlipOrder, setDeliverySlipOrder] = useState(null);
+  const [unsavedPrompt, setUnsavedPrompt] = useState(null);
   const [createdOrderId, setCreatedOrderId] = useState(null);
   const [ordersModalTab, setOrdersModalTab] = useState("current");
   const [showMeasurementErrors, setShowMeasurementErrors] = useState(false);
@@ -449,7 +439,7 @@ export default function App() {
 
   useEffect(() => {
     if (!error) return;
-    setToast({ type: "error", message: error });
+    setToast({ type: "warning", message: error });
     setError("");
   }, [error]);
 
@@ -644,6 +634,18 @@ export default function App() {
     }),
     [stepSaved]
   );
+  function requestUnsavedConfirm(message, onConfirm) {
+    setUnsavedPrompt({ message, onConfirm });
+  }
+
+  function navigateWizardStep(nextStep, _options = {}) {
+    if (nextStep === wizardStep) {
+      setWizardStep(nextStep);
+      return true;
+    }
+    setWizardStep(nextStep);
+    return true;
+  }
 
   function findLatestMeasurementForItemType(itemType) {
     if (!detail?.measurements || !itemType) return null;
@@ -674,7 +676,7 @@ export default function App() {
       }));
       setStepSaved((prev) => ({ ...prev, 2: true }));
       setShowMeasurementErrors(false);
-      setWizardStep(2);
+      navigateWizardStep(2, { force: true });
       return;
     }
 
@@ -688,7 +690,7 @@ export default function App() {
     }));
     setStepSaved((prev) => ({ ...prev, 2: true }));
     setShowMeasurementErrors(false);
-    setWizardStep(2);
+    navigateWizardStep(2, { force: true });
   }
 
   async function deleteMeasurement(measurementId) {
@@ -788,8 +790,19 @@ export default function App() {
   }
 
   async function selectCustomer(customerId) {
+    if (customerId !== selectedId) {
+      const hasUnsaved = !stepSaved[2] || !stepSaved[3] || !stepSaved[4];
+      if (hasUnsaved) {
+        requestUnsavedConfirm("You have unsaved changes. Switch customer anyway?", () => {
+          setSelectedId(customerId);
+          navigateWizardStep(2, { force: true });
+          loadCustomerDetail(customerId);
+        });
+        return;
+      }
+    }
     setSelectedId(customerId);
-    setWizardStep(2);
+    navigateWizardStep(2, { force: true });
     await loadCustomerDetail(customerId);
   }
 
@@ -1087,7 +1100,7 @@ export default function App() {
       setStepSaved((prev) => ({ ...prev, 2: true }));
       setToast({ type: "success", message: "Measurements saved for all filled sections." });
       setShowItemErrors(false);
-      setWizardStep(3);
+      navigateWizardStep(3, { force: true });
       await loadCustomerDetail(selectedId);
     } catch (err) {
       setError(err.message);
@@ -1113,7 +1126,7 @@ export default function App() {
     setStepSaved((prev) => ({ ...prev, 3: true, 4: false }));
     setToast({ type: "success", message: "Items saved." });
     setShowPaymentErrors(false);
-    setWizardStep(4);
+    navigateWizardStep(4, { force: true });
   }
 
   function goToReviewStep() {
@@ -1133,7 +1146,7 @@ export default function App() {
     setError("");
     setStepSaved((prev) => ({ ...prev, 4: true }));
     setToast({ type: "success", message: "Payment saved." });
-    setWizardStep(5);
+    navigateWizardStep(5, { force: true });
   }
 
   async function createWizardOrder() {
@@ -1186,7 +1199,7 @@ export default function App() {
       setShowItemErrors(false);
       setShowPaymentErrors(false);
       setStepSaved({ 2: false, 3: false, 4: false });
-      setWizardStep(2);
+      navigateWizardStep(2, { force: true });
       setDeliveryDate("");
       await refreshSelected();
     } catch (err) {
@@ -1224,11 +1237,8 @@ export default function App() {
         customer_phone: selectedCustomer?.phone || detail?.customer?.phone || ""
       });
       setToast({ type: "success", message: "Order marked as completed." });
-      if (selectedId) {
-        await loadCustomerDetail(selectedId);
-      } else {
-        await loadAdminOrders();
-      }
+      await loadAdminOrders();
+      if (selectedId) await loadCustomerDetail(selectedId);
     } catch (err) {
       setError(err.message);
     }
@@ -1293,11 +1303,8 @@ export default function App() {
         type: "success",
         message: "Due settled. Order marked as completed."
       });
-      if (selectedId) {
-        await loadCustomerDetail(selectedId);
-      } else {
-        await loadAdminOrders();
-      }
+      await loadAdminOrders();
+      if (selectedId) await loadCustomerDetail(selectedId);
     } catch (err) {
       setError(err.message);
     }
@@ -1321,6 +1328,11 @@ export default function App() {
           detail?.customer?.phone ||
           "-"
       ).trim() || "-";
+    const totalAmount = Math.max(0, parseNumber(order.total_amount, 0));
+    const advancePaid = Math.max(0, parseNumber(order.advance_paid, 0));
+    const paidTotal = Math.max(0, parseNumber(order.paid_total, 0));
+    const additionalPaid = Math.max(0, paidTotal - advancePaid);
+    const balanceDue = Math.max(0, totalAmount - paidTotal);
 
     const win = window.open("", "_blank", "width=420,height=700");
     if (!win) return;
@@ -1328,7 +1340,7 @@ export default function App() {
     const lines = (Array.isArray(order.items) ? order.items : [])
       .map((item) => {
         const qty = Math.max(1, parseInt(item.quantity || "1", 10) || 1);
-        const itemType = String(item.item_type || "Item");
+        const itemType = displayGarmentType(item.item_type || "Item");
         const lineTotal = qty * Math.max(0, parseNumber(item.rate, 0));
         return `<tr><td>${itemType}</td><td>${qty}</td><td>${money(lineTotal)}</td></tr>`;
       })
@@ -1339,33 +1351,43 @@ export default function App() {
         <head>
           <title>Delivery Slip #${order.id || ""}</title>
           <style>
-            body { font-family: Arial, sans-serif; margin: 14px; color: #111; }
-            h2 { margin: 0 0 8px; font-size: 18px; }
-            .meta { font-size: 12px; margin: 2px 0; }
-            table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-            th, td { border: 1px solid #999; padding: 6px; font-size: 12px; text-align: left; }
-            .totals { margin-top: 8px; font-size: 12px; }
-            .totals p { margin: 4px 0; }
+            * { box-sizing: border-box; }
+            body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 12px; color: #111; background: #fff; }
+            .receipt { width: 80mm; margin: 0 auto; border: 1px solid #ddd; padding: 10px; }
+            h2 { margin: 0 0 6px; font-size: 16px; text-transform: uppercase; letter-spacing: 0.03em; }
+            .meta { font-size: 11px; margin: 2px 0; }
+            .rule { border-top: 1px dashed #999; margin: 8px 0; }
+            table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+            th, td { border-bottom: 1px solid #ddd; padding: 4px 2px; font-size: 11px; text-align: left; }
+            .totals { margin-top: 8px; font-size: 11px; }
+            .totals p { margin: 4px 0; display: flex; justify-content: space-between; }
+            .sign { margin-top: 14px; font-size: 11px; text-align: right; }
           </style>
         </head>
         <body>
-          <h2>${SHOP_NAME}</h2>
-          <p class="meta">${SHOP_ADDRESS}</p>
-          <p class="meta">Phone: ${SHOP_PHONE}</p>
-          <p class="meta">Order #: ${order.id || "-"}</p>
-          <p class="meta">Customer: ${customerName}</p>
-          <p class="meta">Phone: ${customerPhone}</p>
-          <p class="meta">Delivery Date: ${formatDateDisplay(order.delivery_date)}</p>
-          <table>
-            <thead>
-              <tr><th>Item</th><th>Qty</th><th>Amount</th></tr>
-            </thead>
-            <tbody>${lines}</tbody>
-          </table>
-          <div class="totals">
-            <p>Total: <strong>${money(order.total_amount)}</strong></p>
-            <p>Cash Received: <strong>${money(order.paid_total)}</strong></p>
-            <p>Balance: <strong>${money(Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0)))}</strong></p>
+          <div class="receipt">
+            <h2>${SHOP_NAME}</h2>
+            <p class="meta">${SHOP_ADDRESS}</p>
+            <p class="meta">Phone: ${SHOP_PHONE}</p>
+            <div class="rule"></div>
+            <p class="meta">Order #: ${order.id || "-"}</p>
+            <p class="meta">Customer: ${customerName}</p>
+            <p class="meta">Phone: ${customerPhone}</p>
+            <p class="meta">Delivery Date: ${formatDateDisplay(order.delivery_date)}</p>
+            <table>
+              <thead>
+                <tr><th>Item</th><th>Qty</th><th>Amount</th></tr>
+              </thead>
+              <tbody>${lines}</tbody>
+            </table>
+            <div class="totals">
+              <p><span>Total</span><strong>${money(totalAmount)}</strong></p>
+              <p><span>Advance Paid</span><strong>${money(advancePaid)}</strong></p>
+              <p><span>Additional Paid</span><strong>${money(additionalPaid)}</strong></p>
+              <p><span>Cash Received</span><strong>${money(paidTotal)}</strong></p>
+              <p><span>Balance</span><strong>${money(balanceDue)}</strong></p>
+            </div>
+            <div class="sign">Customer Signature</div>
           </div>
         </body>
       </html>
@@ -1689,12 +1711,12 @@ export default function App() {
                                 </div>
                                 <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
                                   <p className="text-slate-500">Order Taken</p>
-                                  <p className="font-semibold text-ink">{formatDateTime(order.created_at)}</p>
+                                  <p className="font-semibold text-ink">{formatDateDisplay(order.created_at)}</p>
                                 </div>
                                 <div className="col-span-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
                                   <p className="text-slate-500">Delivery</p>
                                   <p className="font-semibold text-ink">
-                                    {order.delivery_date ? formatDateTime(order.delivery_date) : "Not set"}
+                                    {order.delivery_date ? formatDateDisplay(order.delivery_date) : "Not set"}
                                   </p>
                                 </div>
                               </div>
@@ -1742,12 +1764,12 @@ export default function App() {
                                 </div>
                                 <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
                                   <p className="text-slate-500">Order Taken</p>
-                                  <p className="font-semibold text-ink">{formatDateTime(order.created_at)}</p>
+                                  <p className="font-semibold text-ink">{formatDateDisplay(order.created_at)}</p>
                                 </div>
                                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5">
                                   <p className="text-emerald-600">Delivered</p>
                                   <p className="font-semibold text-emerald-700">
-                                    {order.delivery_date ? formatDateTime(order.delivery_date) : "Not set"}
+                                    {order.delivery_date ? formatDateDisplay(order.delivery_date) : "Not set"}
                                   </p>
                                 </div>
                               </div>
@@ -1804,12 +1826,12 @@ export default function App() {
                                   </div>
                                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
                                     <p className="text-slate-500">Order Taken</p>
-                                    <p className="font-semibold text-ink">{formatDateTime(order.created_at)}</p>
+                                    <p className="font-semibold text-ink">{formatDateDisplay(order.created_at)}</p>
                                   </div>
                                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
                                     <p className="text-slate-500">Delivery</p>
                                     <p className="font-semibold text-ink">
-                                      {order.delivery_date ? formatDateTime(order.delivery_date) : "Not set"}
+                                      {order.delivery_date ? formatDateDisplay(order.delivery_date) : "Not set"}
                                     </p>
                                   </div>
                                 </div>
@@ -1855,12 +1877,12 @@ export default function App() {
                                 </div>
                                 <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
                                   <p className="text-slate-500">Order Taken</p>
-                                  <p className="font-semibold text-ink">{formatDateTime(order.created_at)}</p>
+                                  <p className="font-semibold text-ink">{formatDateDisplay(order.created_at)}</p>
                                 </div>
                                 <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
                                   <p className="text-slate-500">Delivery</p>
                                   <p className="font-semibold text-ink">
-                                    {order.delivery_date ? formatDateTime(order.delivery_date) : "Not set"}
+                                    {order.delivery_date ? formatDateDisplay(order.delivery_date) : "Not set"}
                                   </p>
                                 </div>
                               </div>
@@ -2018,7 +2040,7 @@ export default function App() {
                               <button
                                 type="button"
                                 disabled={step.id > wizardStep && !stepCompleted[step.id - 1]}
-                                onClick={() => setWizardStep(step.id)}
+                                onClick={() => navigateWizardStep(step.id)}
                                 className="flex min-w-[120px] shrink-0 flex-col items-center gap-2 text-center"
                               >
                                 <span
@@ -2060,32 +2082,33 @@ export default function App() {
 
                   {wizardStep === 2 ? (
                     <div className="h-[520px] space-y-4 overflow-y-auto rounded-2xl border border-brand-100 bg-white/90 p-4 text-sm shadow-inner">
-                      <h3 className="text-lg font-bold">
+                      <h3 className="text-lg font-bold text-ink">
                         Step 1: Measurements {stepCompleted[2] ? "✓" : ""}
                       </h3>
-                      <p className="text-xs text-slate-600">
+                      <p className="rounded-lg border border-brand-100 bg-brand-50/60 px-3 py-2 text-[11px] text-slate-700">
                         Fill measurements directly for all garment types. Previously saved values are auto-filled.
                       </p>
 
-                      <div className="space-y-1.5">
+                      <div className="space-y-2">
                         {MEASUREMENT_SECTION_TYPES.map((garmentType) => (
                           <div
                             key={garmentType}
-                            className={`rounded-lg border bg-white p-2 ${
+                            className={`group relative overflow-hidden rounded-xl border bg-gradient-to-r from-white via-white to-slate-50 p-2.5 shadow-sm transition-all ${
                               showMeasurementErrors && !hasAnyMeasurementInput
                                 ? "border-red-300"
-                                : "border-brand-100"
+                                : "border-slate-200 hover:border-brand-300 hover:shadow-md"
                             }`}
                           >
+                            <div className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-brand-500/70 to-brand-300/70" />
                             <div className="flex items-center gap-1.5">
-                              <div className="w-24 shrink-0 text-xs font-bold uppercase tracking-wide text-ink">
+                              <div className="w-24 shrink-0 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-700">
                                   {GARMENT_DISPLAY_LABELS[garmentType] || garmentType}
                               </div>
                               <div className="flex flex-1 flex-nowrap items-end gap-1 overflow-x-auto pb-0.5">
                                 {getFieldsForGarment(garmentType).map(([fieldKey, label]) => (
                                   <label
                                     key={`${garmentType}-${fieldKey}`}
-                                    className="w-[58px] shrink-0 space-y-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                                    className="w-[60px] shrink-0 space-y-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-500"
                                   >
                                     <span>{label}</span>
                                     <input
@@ -2093,7 +2116,7 @@ export default function App() {
                                       onChange={(event) =>
                                         updateMeasurementField(garmentType, fieldKey, event.target.value)
                                       }
-                                      className="w-full rounded border border-brand-200 bg-white px-1 py-1 text-[11px] font-medium normal-case text-ink outline-none ring-brand-400 focus:ring"
+                                      className="w-full rounded-md border border-slate-300 bg-white px-1.5 py-1 text-[11px] font-medium normal-case text-ink shadow-sm outline-none ring-brand-400 transition focus:border-brand-400 focus:ring"
                                     />
                                   </label>
                                 ))}
@@ -2102,7 +2125,7 @@ export default function App() {
                           </div>
                         ))}
 
-                        <label className="space-y-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-600">
+                        <label className="space-y-0.5 rounded-lg border border-slate-200 bg-white p-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-600">
                           <span>Detail</span>
                           <input
                             placeholder="Additional note"
@@ -2110,7 +2133,7 @@ export default function App() {
                             onChange={(event) =>
                               setMeasurementDraft((prev) => ({ ...prev, measurement_note: event.target.value }))
                             }
-                            className="w-full rounded border border-brand-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-ink shadow-sm outline-none ring-brand-400 focus:ring"
+                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium normal-case text-ink shadow-sm outline-none ring-brand-400 transition focus:border-brand-400 focus:ring"
                           />
                         </label>
                       </div>
@@ -2120,7 +2143,7 @@ export default function App() {
                         </p>
                       ) : null}
 
-                      <div className="flex flex-wrap gap-2">
+                      <StickyStepActions>
                         <button
                           type="button"
                           onClick={saveMeasurement}
@@ -2128,20 +2151,25 @@ export default function App() {
                         >
                           Save & Next
                         </button>
-                      </div>
+                      </StickyStepActions>
                     </div>
                   ) : null}
 
                   {wizardStep === 3 ? (
-                    <div className="h-[520px] space-y-4 overflow-y-auto rounded-2xl border border-brand-100 bg-white/90 p-4 text-sm shadow-inner">
-                      <h3 className="text-lg font-bold">
-                        Step 2: Items {stepCompleted[3] ? "✓" : ""}
-                      </h3>
-                      <p className="text-xs text-slate-600">Add one or more items. Subtotal is auto-calculated.</p>
+                    <div className="h-[520px] space-y-4 overflow-y-auto rounded-2xl border border-brand-100 bg-gradient-to-b from-white to-brand-50/30 p-4 text-sm shadow-inner">
+                      <div className="rounded-xl border border-brand-100 bg-white p-3 shadow-sm">
+                        <h3 className="text-lg font-bold text-ink">
+                          Step 2: Items {stepCompleted[3] ? "✓" : ""}
+                        </h3>
+                        <p className="mt-1 text-[11px] text-slate-700">
+                          Add one or more items. Subtotal is auto-calculated.
+                        </p>
+                      </div>
 
                       <div className="space-y-2">
                         {orderItemsWithTotals.map((item) => (
-                          <div key={item.id} className="grid grid-cols-12 gap-2 rounded-xl border border-brand-100 bg-white p-3 shadow-sm">
+                          <div key={item.id} className="relative grid grid-cols-12 gap-2 rounded-xl border border-brand-100 bg-white p-3 shadow-sm transition hover:border-brand-300 hover:shadow-md">
+                            <div className="pointer-events-none absolute inset-y-0 left-0 w-1 rounded-l-xl bg-brand-300/70" />
                             {(() => {
                               const rowError =
                                 itemErrors.find((row) => row.itemId === item.id) || {};
@@ -2212,7 +2240,7 @@ export default function App() {
                         ))}
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2">
+                      <StickyStepActions>
                         <button
                           type="button"
                           onClick={() => {
@@ -2232,7 +2260,7 @@ export default function App() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setWizardStep(2)}
+                          onClick={() => navigateWizardStep(2)}
                           className="rounded-lg bg-slate-200 px-3 py-1.5 font-semibold text-slate-700"
                         >
                           Back
@@ -2244,9 +2272,12 @@ export default function App() {
                         >
                           Save & Next
                         </button>
-                      </div>
+                      </StickyStepActions>
 
-                      <p className="text-sm font-semibold text-ink">Subtotal: {money(subtotal)}</p>
+                      <div className="rounded-xl border border-brand-200 bg-brand-50/70 px-3 py-2 shadow-sm">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subtotal</p>
+                        <p className="text-base font-bold text-ink">{money(subtotal)}</p>
+                      </div>
                       {showItemErrors && (hasItemErrors || subtotal <= 0) ? (
                         <p className="text-xs font-semibold text-red-600">
                           Fill item type, quantity, and rate for each row. Subtotal must be greater than 0.
@@ -2256,10 +2287,13 @@ export default function App() {
                   ) : null}
 
                   {wizardStep === 4 ? (
-                    <div className="h-[520px] space-y-4 overflow-y-auto rounded-2xl border border-brand-100 bg-white/90 p-4 text-sm shadow-inner">
-                      <h3 className="text-lg font-bold">
-                        Step 3: Payments {stepCompleted[4] ? "✓" : ""}
-                      </h3>
+                    <div className="h-[520px] space-y-4 overflow-y-auto rounded-2xl border border-brand-100 bg-gradient-to-b from-white to-brand-50/30 p-4 text-sm shadow-inner">
+                      <div className="rounded-xl border border-brand-100 bg-white p-3 shadow-sm">
+                        <h3 className="text-lg font-bold text-ink">
+                          Step 3: Payments {stepCompleted[4] ? "✓" : ""}
+                        </h3>
+                        <p className="mt-1 text-[11px] text-slate-700">Confirm payment and delivery details.</p>
+                      </div>
 
                       <div className="grid grid-cols-2 gap-2">
                         <div className="rounded-xl border border-brand-100 bg-white p-3 shadow-sm">
@@ -2338,10 +2372,10 @@ export default function App() {
                         </p>
                       ) : null}
 
-                      <div className="flex flex-wrap gap-2">
+                      <StickyStepActions>
                         <button
                           type="button"
-                          onClick={() => setWizardStep(3)}
+                          onClick={() => navigateWizardStep(3)}
                           className="rounded-lg bg-slate-200 px-3 py-1.5 font-semibold text-slate-700"
                         >
                           Back
@@ -2353,35 +2387,38 @@ export default function App() {
                         >
                           Save & Next
                         </button>
-                      </div>
+                      </StickyStepActions>
                     </div>
                   ) : null}
 
                   {wizardStep === 5 ? (
-                    <div className="h-[520px] space-y-4 overflow-y-auto rounded-2xl border border-brand-100 bg-white/90 p-4 text-sm shadow-inner">
-                      <h3 className="text-lg font-bold">
-                        Step 4: Review {stepCompleted[5] ? "✓" : ""}
-                      </h3>
+                    <div className="h-[520px] space-y-4 overflow-y-auto rounded-2xl border border-brand-100 bg-gradient-to-b from-white to-brand-50/30 p-4 text-sm shadow-inner">
+                      <div className="rounded-xl border border-brand-100 bg-white p-3 shadow-sm">
+                        <h3 className="text-lg font-bold text-ink">
+                          Step 4: Review {stepCompleted[5] ? "✓" : ""}
+                        </h3>
+                        <p className="mt-1 text-[11px] text-slate-700">Review all details before creating order.</p>
+                      </div>
 
                       <div className="grid gap-3 md:grid-cols-2">
-                        <div className="rounded-lg bg-slate-50 p-3">
+                        <div className="rounded-xl border border-brand-100 bg-white p-3 shadow-sm">
                           <p className="text-xs font-semibold text-slate-600">Customer</p>
                           <p className="font-semibold text-ink">{selectedCustomer.name}</p>
                           <p className="text-xs text-slate-600">{selectedCustomer.phone || "No phone"}</p>
                         </div>
 
-                        <div className="rounded-lg bg-slate-50 p-3">
+                        <div className="rounded-xl border border-brand-100 bg-white p-3 shadow-sm">
                           <p className="text-xs font-semibold text-slate-600">Order Date</p>
                           <p className="font-semibold text-ink">{orderDate}</p>
                         </div>
 
-                        <div className="rounded-lg bg-slate-50 p-3">
+                        <div className="rounded-xl border border-brand-100 bg-white p-3 shadow-sm">
                           <p className="text-xs font-semibold text-slate-600">Delivery Date</p>
                           <p className="font-semibold text-ink">{formatDateDisplay(deliveryDate)}</p>
                         </div>
                       </div>
 
-                      <div className="rounded-lg bg-slate-50 p-3">
+                      <div className="rounded-xl border border-brand-100 bg-white p-3 shadow-sm">
                         <p className="text-xs font-semibold text-slate-600">Measurements</p>
                         {(savedMeasurements.length > 0 ? savedMeasurements : detail.measurements.slice(0, 3)).map(
                           (measurement) => {
@@ -2399,7 +2436,7 @@ export default function App() {
                         )}
                       </div>
 
-                      <div className="rounded-lg bg-slate-50 p-3">
+                      <div className="rounded-xl border border-brand-100 bg-white p-3 shadow-sm">
                         <p className="text-xs font-semibold text-slate-600">Items</p>
                         {orderItemsWithTotals.map((item) => (
                           <p key={item.id} className="text-xs text-slate-700">
@@ -2409,17 +2446,17 @@ export default function App() {
                         <p className="mt-2 text-sm font-semibold text-ink">Subtotal: {money(subtotal)}</p>
                       </div>
 
-                      <div className="rounded-lg bg-slate-50 p-3">
+                      <div className="rounded-xl border border-brand-100 bg-white p-3 shadow-sm">
                         <p className="text-xs font-semibold text-slate-600">Payment</p>
                         <p className="text-xs text-slate-700">Final Total: {money(paymentSummary.finalTotal)}</p>
                         <p className="text-xs text-slate-700">Advance Paid: {money(paymentSummary.advance)}</p>
                         <p className="text-xs font-semibold text-ink">Balance: {money(paymentSummary.balance)}</p>
                       </div>
 
-                      <div className="flex flex-wrap gap-2">
+                      <StickyStepActions>
                         <button
                           type="button"
-                          onClick={() => setWizardStep(4)}
+                          onClick={() => navigateWizardStep(4)}
                           className="rounded-lg bg-slate-200 px-3 py-1.5 font-semibold text-slate-700"
                         >
                           Back
@@ -2431,7 +2468,7 @@ export default function App() {
                         >
                           Create Order
                         </button>
-                      </div>
+                      </StickyStepActions>
                     </div>
                   ) : null}
                 </article>
@@ -2603,12 +2640,12 @@ export default function App() {
                         )}
                         <div className="rounded-lg border border-slate-200 bg-white px-2 py-1.5">
                           <p className="text-slate-500">Order Taken</p>
-                          <p className="font-semibold text-ink">{formatDateTime(order.created_at)}</p>
+                          <p className="font-semibold text-ink">{formatDateDisplay(order.created_at)}</p>
                         </div>
                         <div className="col-span-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5">
                           <p className="text-slate-500">Delivered Date</p>
                           <p className="font-semibold text-ink">
-                            {order.delivery_date ? formatDateTime(order.delivery_date) : "Not set"}
+                            {order.delivery_date ? formatDateDisplay(order.delivery_date) : "Not set"}
                           </p>
                         </div>
                       </div>
@@ -2725,7 +2762,7 @@ export default function App() {
         <div className="fixed inset-0 z-[67] flex items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl">
             <h3 className="font-display text-2xl text-ink">Customer Delivery Slip</h3>
-            <p className="mt-1 text-sm text-slate-700">Final handover copy for completed order.</p>
+            <p className="mt-1 text-sm text-slate-700">Final handover copy for completed order. Reprint anytime.</p>
 
             <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
               <p>
@@ -2749,7 +2786,7 @@ export default function App() {
                 const rate = Math.max(0, parseNumber(item.rate, 0));
                 return (
                   <p key={`delivery-slip-item-${item.id || item.item_type}`}>
-                    {qty} x {item.item_type} x {money(rate)} = {money(qty * rate)}
+                    {qty} x {displayGarmentType(item.item_type)} x {money(rate)} = {money(qty * rate)}
                   </p>
                 );
               })}
@@ -2791,7 +2828,36 @@ export default function App() {
                 onClick={() => setDeliverySlipOrder(null)}
                 className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700"
               >
-                Close
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {unsavedPrompt ? (
+        <div className="fixed inset-0 z-[68] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <h3 className="font-display text-xl text-ink">Unsaved Changes</h3>
+            <p className="mt-2 text-sm text-slate-700">{unsavedPrompt.message}</p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const action = unsavedPrompt.onConfirm;
+                  setUnsavedPrompt(null);
+                  if (typeof action === "function") action();
+                }}
+                className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white"
+              >
+                Continue
+              </button>
+              <button
+                type="button"
+                onClick={() => setUnsavedPrompt(null)}
+                className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700"
+              >
+                Stay Here
               </button>
             </div>
           </div>
@@ -2965,27 +3031,7 @@ export default function App() {
         </div>
       ) : null}
 
-      {toast ? (
-        <div className="fixed right-5 top-5 z-[60]">
-          <div
-            className={`td-toast-enter td-toast-card min-w-[280px] max-w-[380px] rounded-xl border px-4 py-3 text-sm text-white shadow-2xl ${
-              toast.type === "error"
-                ? "border-amber-200/40 bg-gradient-to-r from-amber-800 to-orange-700"
-                : "border-brand-200/40 bg-gradient-to-r from-brand-900 via-brand-800 to-brand-700"
-            }`}
-          >
-            <div className="flex items-start gap-2">
-              <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-white/25 text-xs font-bold">
-                {toast.type === "error" ? "!" : "✓"}
-              </span>
-              <div>
-                <p className="text-sm font-semibold text-white">{toast.message}</p>
-              </div>
-            </div>
-            <div className="td-toast-progress mt-2 h-1 rounded-full bg-white/70" />
-          </div>
-        </div>
-      ) : null}
+      <AppToast toast={toast} />
     </main>
   );
 }
