@@ -35,12 +35,15 @@ router.post("/setup-admin", (req, res) => {
 });
 
 router.post("/login", (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ message: "Email and password are required" });
+  const { email, mobile, identifier, password } = req.body;
+  const loginId = String(identifier ?? email ?? mobile ?? "").trim();
+  if (!loginId || !password) {
+    return res.status(400).json({ message: "Email/mobile and password are required" });
   }
 
-  const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+  const user = db
+    .prepare("SELECT * FROM users WHERE LOWER(email) = LOWER(?) OR mobile = ?")
+    .get(loginId, loginId);
   if (!user) {
     return res.status(401).json({ message: "Invalid credentials" });
   }

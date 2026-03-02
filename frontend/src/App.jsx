@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
-const GARMENT_TYPES = ["Shirt", "Pant", "Suit", "Blouse", "Kurti", "Other"];
+const GARMENT_TYPES = ["Shirt", "Pant", "Suit", "Blouse", "Kurti"];
 const FLOW_STEPS = [
   { id: 2, label: "Measurements" },
   { id: 3, label: "Items" },
@@ -14,13 +14,22 @@ const GARMENT_FIELDS = {
     ["neck", "Neck"],
     ["chest", "Chest"],
     ["waist", "Waist"],
+    ["hip", "Hip"],
     ["shoulder", "Shoulder"],
     ["sleeve", "Sleeve"],
-    ["length", "Length"]
+    ["length", "Length"],
+    ["cuff", "Cuff"],
+    ["bicep", "Bicep"],
+    ["armhole", "Armhole"]
   ],
   Pant: [
     ["waist", "Waist"],
-    ["hip", "Hip"],
+    ["seat", "Seat"],
+    ["thigh", "Thigh"],
+    ["knee", "Knee"],
+    ["bottom", "Bottom"],
+    ["front_rise", "Front Rise"],
+    ["back_rise", "Back Rise"],
     ["inseam", "Inseam"],
     ["length", "Length"]
   ],
@@ -31,14 +40,19 @@ const GARMENT_FIELDS = {
     ["hip", "Hip"],
     ["shoulder", "Shoulder"],
     ["sleeve", "Sleeve"],
-    ["length", "Length"],
-    ["inseam", "Inseam"]
+    ["coat_length", "Coat Length"],
+    ["pant_waist", "Pant Waist"],
+    ["inseam", "Inseam"],
+    ["pant_length", "Pant Length"]
   ],
   Blouse: [
     ["bust", "Bust"],
+    ["underbust", "Under Bust"],
     ["waist", "Waist"],
     ["shoulder", "Shoulder"],
     ["sleeve", "Sleeve"],
+    ["armhole", "Armhole"],
+    ["neck_depth", "Neck Depth"],
     ["blouse_length", "Blouse Length"]
   ],
   Kurti: [
@@ -47,9 +61,24 @@ const GARMENT_FIELDS = {
     ["hip", "Hip"],
     ["shoulder", "Shoulder"],
     ["sleeve", "Sleeve"],
+    ["armhole", "Armhole"],
+    ["bottom", "Bottom"],
     ["kurti_length", "Kurti Length"]
   ]
 };
+const MEASUREMENT_SECTION_TYPES = Object.keys(GARMENT_FIELDS);
+const GARMENT_DISPLAY_LABELS = {
+  Shirt: "Shirt",
+  Pant: "Trouser",
+  Suit: "Suit",
+  Blouse: "Blouse",
+  Kurti: "Kurti"
+};
+const APP_TITLE = "Bhavani Stitchers Tailor Desk";
+const SHOP_NAME = "Bhavani Dress Designer Stitchers";
+const SHOP_ADDRESS =
+  "Shop No.1, H.No.17-1-382/K/1, SVR Neeladri Complex, Beside Reliance Trendz, Champapet, Hyderabad";
+const SHOP_PHONE = "8465021760";
 
 async function api(path, options = {}, token = "") {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -95,10 +124,6 @@ function getFieldsForGarment(garmentType) {
 }
 
 function getEmptyMeasurementData(garmentType) {
-  if (garmentType === "Other") {
-    return { custom_details: "" };
-  }
-
   const data = {};
   getFieldsForGarment(garmentType).forEach(([key]) => {
     data[key] = "";
@@ -115,6 +140,26 @@ function normalizeMeasurementData(garmentType, source) {
     }
   });
   return base;
+}
+
+function getEmptyMeasurementDraftData() {
+  return MEASUREMENT_SECTION_TYPES.reduce((acc, garmentType) => {
+    acc[garmentType] = getEmptyMeasurementData(garmentType);
+    return acc;
+  }, {});
+}
+
+function normalizeMeasurementDraftData(source) {
+  const input = source && typeof source === "object" ? source : {};
+  return MEASUREMENT_SECTION_TYPES.reduce((acc, garmentType) => {
+    acc[garmentType] = normalizeMeasurementData(garmentType, input[garmentType]);
+    return acc;
+  }, {});
+}
+
+function hasMeasurementValues(data) {
+  if (!data || typeof data !== "object") return false;
+  return Object.values(data).some((value) => String(value ?? "").trim() !== "");
 }
 
 function getLegacyMeasurementData(row) {
@@ -166,9 +211,7 @@ function emptyCustomerForm() {
 
 function emptyMeasurementDraft() {
   return {
-    garment_type: "Shirt",
-    garment_type_other: "",
-    measurement_data: getEmptyMeasurementData("Shirt"),
+    measurement_data: getEmptyMeasurementDraftData(),
     measurement_note: ""
   };
 }
@@ -212,8 +255,43 @@ function formatDateTime(value) {
   });
 }
 
+function todayDisplayDate() {
+  return new Date().toLocaleDateString("en-GB");
+}
+
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function isValidDisplayDate(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return false;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  if (year < 1900 || year > 2100) return false;
+  const parsed = new Date(year, month - 1, day);
+  return (
+    parsed.getFullYear() === year &&
+    parsed.getMonth() === month - 1 &&
+    parsed.getDate() === day
+  );
+}
+
+function isValidFutureOrTodayIsoDate(value) {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
+  return raw >= todayIsoDate();
+}
+
+function formatDateDisplay(value) {
+  if (!value) return "-";
+  const raw = String(value).trim();
+  if (isValidDisplayDate(raw)) return raw;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return parsed.toLocaleDateString("en-GB");
 }
 
 function getStepState(stepId, wizardStep, stepCompleted) {
@@ -274,13 +352,15 @@ export default function App() {
   const [completionModalOrder, setCompletionModalOrder] = useState(null);
   const [completionMethod, setCompletionMethod] = useState("cash");
   const [completionNote, setCompletionNote] = useState("");
+  const [deliverySlipOrder, setDeliverySlipOrder] = useState(null);
   const [createdOrderId, setCreatedOrderId] = useState(null);
   const [ordersModalTab, setOrdersModalTab] = useState("current");
   const [showMeasurementErrors, setShowMeasurementErrors] = useState(false);
   const [showItemErrors, setShowItemErrors] = useState(false);
   const [showPaymentErrors, setShowPaymentErrors] = useState(false);
   const [stepSaved, setStepSaved] = useState({ 2: false, 3: false, 4: false });
-  const [orderDate, setOrderDate] = useState(todayIsoDate());
+  const [orderDate, setOrderDate] = useState(todayDisplayDate());
+  const [deliveryDate, setDeliveryDate] = useState("");
   const [adminUsers, setAdminUsers] = useState([]);
   const [adminUsersLoading, setAdminUsersLoading] = useState(false);
   const [adminOrders, setAdminOrders] = useState([]);
@@ -357,7 +437,8 @@ export default function App() {
     setShowPaymentErrors(false);
     setStepSaved({ 2: false, 3: false, 4: false });
     setAutofillCustomerId(null);
-    setOrderDate(todayIsoDate());
+    setOrderDate(todayDisplayDate());
+    setDeliveryDate("");
   }, [selectedId]);
 
   useEffect(() => {
@@ -367,21 +448,35 @@ export default function App() {
   }, [toast]);
 
   useEffect(() => {
+    if (!error) return;
+    setToast({ type: "error", message: error });
+    setError("");
+  }, [error]);
+
+  useEffect(() => {
     if (!detail?.customer?.id) return;
     if (autofillCustomerId === detail.customer.id) return;
 
-    const latestShirt = findLatestMeasurementForItemType("Shirt");
-    const source =
-      latestShirt && latestShirt.measurement_data && Object.keys(latestShirt.measurement_data).length > 0
-        ? latestShirt.measurement_data
-        : getLegacyMeasurementData(latestShirt);
+    const nextDraftData = normalizeMeasurementDraftData(
+      MEASUREMENT_SECTION_TYPES.reduce((acc, garmentType) => {
+        const latest = findLatestMeasurementForItemType(garmentType);
+        const source =
+          latest && latest.measurement_data && Object.keys(latest.measurement_data).length > 0
+            ? latest.measurement_data
+            : getLegacyMeasurementData(latest);
+        acc[garmentType] = source;
+        return acc;
+      }, {})
+    );
+
+    const latestNotes =
+      MEASUREMENT_SECTION_TYPES.map((garmentType) => findLatestMeasurementForItemType(garmentType)?.notes)
+        .find((notes) => String(notes || "").trim()) || "";
 
     setMeasurementDraft((prev) => ({
       ...prev,
-      garment_type: "Shirt",
-      garment_type_other: "",
-      measurement_data: normalizeMeasurementData("Shirt", source),
-      measurement_note: latestShirt?.notes || ""
+      measurement_data: nextDraftData,
+      measurement_note: latestNotes
     }));
     setAutofillCustomerId(detail.customer.id);
   }, [detail, autofillCustomerId]);
@@ -420,7 +515,6 @@ export default function App() {
     () => orderItemsWithTotals.reduce((sum, item) => sum + item.line_total, 0),
     [orderItemsWithTotals]
   );
-
   const selectedItemTypes = useMemo(
     () =>
       orderItems
@@ -439,25 +533,50 @@ export default function App() {
     };
   }, [subtotal, paymentDraft]);
 
-  const measurementFields = getFieldsForGarment(measurementDraft.garment_type);
-  const measurementFieldErrors = useMemo(() => {
-    if (measurementDraft.garment_type === "Other") {
-      const missingCustom = !String(measurementDraft.measurement_data.custom_details || "").trim();
-      const missingType = !String(measurementDraft.garment_type_other || "").trim();
-      return { missingCustom, missingType, missingKeys: [] };
-    }
-    const missingKeys = measurementFields
-      .map(([fieldKey]) => fieldKey)
-      .filter((fieldKey) => !String(measurementDraft.measurement_data[fieldKey] || "").trim());
-    return { missingCustom: false, missingType: false, missingKeys };
-  }, [measurementDraft, measurementFields]);
+  const hasAnyMeasurementInput = useMemo(
+    () =>
+      MEASUREMENT_SECTION_TYPES.some((garmentType) =>
+        hasMeasurementValues(measurementDraft.measurement_data[garmentType])
+      ),
+    [measurementDraft]
+  );
+  const missingMeasurementTypesForItems = useMemo(() => {
+    const rows = savedMeasurements.length > 0 ? savedMeasurements : detail?.measurements || [];
+    const hasSavedForType = (itemType) => {
+      const target = String(itemType || "").trim().toLowerCase();
+      if (!target) return false;
+
+      const draftType = MEASUREMENT_SECTION_TYPES.find((type) => type.toLowerCase() === target);
+      if (draftType && hasMeasurementValues(measurementDraft.measurement_data[draftType])) {
+        return true;
+      }
+
+      return rows.some((measurement) => {
+        if (String(measurement.item_type || "").trim().toLowerCase() !== target) return false;
+        const data =
+          measurement.measurement_data && Object.keys(measurement.measurement_data).length > 0
+            ? measurement.measurement_data
+            : getLegacyMeasurementData(measurement);
+        return hasMeasurementValues(data);
+      });
+    };
+
+    const uniqueTypes = Array.from(
+      new Set(
+        orderItemsWithTotals
+          .map((item) => String(item.item_type || "").trim())
+          .filter(Boolean)
+      )
+    );
+    return uniqueTypes.filter((itemType) => !hasSavedForType(itemType));
+  }, [savedMeasurements, detail, measurementDraft, orderItemsWithTotals]);
 
   const itemErrors = useMemo(
     () =>
       orderItemsWithTotals.map((item) => ({
         itemId: item.id,
         itemTypeMissing: !String(item.item_type || "").trim(),
-        quantityMissing: !String(item.quantity || "").trim() || item.quantity_num <= 0,
+        quantityMissing: item.quantity_num <= 0,
         rateMissing: !String(item.rate || "").trim()
       })),
     [orderItemsWithTotals]
@@ -526,13 +645,6 @@ export default function App() {
     [stepSaved]
   );
 
-  function resolveMeasurementType(draft = measurementDraft) {
-    if (draft.garment_type === "Other") {
-      return String(draft.garment_type_other || "").trim();
-    }
-    return draft.garment_type;
-  }
-
   function findLatestMeasurementForItemType(itemType) {
     if (!detail?.measurements || !itemType) return null;
     const target = String(itemType).trim().toLowerCase();
@@ -545,42 +657,33 @@ export default function App() {
     );
   }
 
-  function applyMeasurementAutofill(nextType, customType = "", options = {}) {
-    const lookupType = nextType === "Other" ? customType : nextType;
-    const latest = findLatestMeasurementForItemType(lookupType);
-    const source =
-      latest && latest.measurement_data && Object.keys(latest.measurement_data).length > 0
-        ? latest.measurement_data
-        : getLegacyMeasurementData(latest);
-
-    setMeasurementDraft((prev) => ({
-      ...prev,
-      garment_type: nextType,
-      garment_type_other: nextType === "Other" ? customType : "",
-      measurement_data: normalizeMeasurementData(nextType, source),
-      measurement_note: latest?.notes || prev.measurement_note
-    }));
-    setStepSaved((prev) => ({ ...prev, 2: false }));
-
-    if (latest && !options.silent) {
-      // keep silent in normal flow to avoid noisy notifications
-    }
-  }
-
   function loadMeasurementFromHistory(measurement) {
-    const isPresetType = GARMENT_TYPES.includes(measurement.item_type)
-      ? measurement.item_type
-      : "Other";
+    const garmentType =
+      MEASUREMENT_SECTION_TYPES.find(
+        (type) => type.toLowerCase() === String(measurement.item_type || "").trim().toLowerCase()
+      ) || null;
     const source =
       measurement.measurement_data && Object.keys(measurement.measurement_data).length > 0
         ? measurement.measurement_data
         : getLegacyMeasurementData(measurement);
 
+    if (!garmentType) {
+      setMeasurementDraft((prev) => ({
+        ...prev,
+        measurement_note: measurement.notes || prev.measurement_note
+      }));
+      setStepSaved((prev) => ({ ...prev, 2: true }));
+      setShowMeasurementErrors(false);
+      setWizardStep(2);
+      return;
+    }
+
     setMeasurementDraft((prev) => ({
       ...prev,
-      garment_type: isPresetType,
-      garment_type_other: isPresetType === "Other" ? measurement.item_type || "" : "",
-      measurement_data: normalizeMeasurementData(isPresetType, source),
+      measurement_data: {
+        ...prev.measurement_data,
+        [garmentType]: normalizeMeasurementData(garmentType, source)
+      },
       measurement_note: measurement.notes || ""
     }));
     setStepSaved((prev) => ({ ...prev, 2: true }));
@@ -604,12 +707,15 @@ export default function App() {
     }
   }
 
-  function updateMeasurementField(key, value) {
+  function updateMeasurementField(garmentType, key, value) {
     setMeasurementDraft((prev) => ({
       ...prev,
       measurement_data: {
         ...prev.measurement_data,
-        [key]: value
+        [garmentType]: {
+          ...(prev.measurement_data[garmentType] || getEmptyMeasurementData(garmentType)),
+          [key]: value
+        }
       }
     }));
     setStepSaved((prev) => ({ ...prev, 2: false }));
@@ -935,51 +1041,51 @@ export default function App() {
   async function saveMeasurement() {
     if (!selectedId) return;
 
-    const itemType = resolveMeasurementType();
-    if (!itemType) {
-      setError("Please choose garment type.");
-      return;
-    }
     setShowMeasurementErrors(true);
-    if (
-      measurementFieldErrors.missingType ||
-      measurementFieldErrors.missingCustom ||
-      measurementFieldErrors.missingKeys.length > 0
-    ) {
-      setError("Fill all required measurement fields.");
+    if (!hasAnyMeasurementInput) {
+      setError("Enter at least one measurement value.");
       return;
     }
 
     try {
       setError("");
 
-      const payload = {
-        item_type: itemType,
+      const payloads = MEASUREMENT_SECTION_TYPES.filter((garmentType) =>
+        hasMeasurementValues(measurementDraft.measurement_data[garmentType])
+      ).map((garmentType) => ({
+        item_type: garmentType,
         notes: measurementDraft.measurement_note,
         measurement_data: normalizeMeasurementData(
-          measurementDraft.garment_type,
-          measurementDraft.measurement_data
+          garmentType,
+          measurementDraft.measurement_data[garmentType]
         ),
         create_order: false
-      };
+      }));
 
-      const created = await api(
-        `/api/customers/${selectedId}/measurements`,
-        {
-          method: "POST",
-          body: JSON.stringify(payload)
-        },
-        token
+      const createdRows = await Promise.all(
+        payloads.map((payload) =>
+          api(
+            `/api/customers/${selectedId}/measurements`,
+            {
+              method: "POST",
+              body: JSON.stringify(payload)
+            },
+            token
+          )
+        )
       );
 
       setSavedMeasurements((prev) => {
-        if (prev.some((item) => item.id === created.id)) {
-          return prev;
-        }
-        return [created, ...prev];
+        const next = [...prev];
+        createdRows.forEach((created) => {
+          if (!next.some((item) => item.id === created.id)) {
+            next.unshift(created);
+          }
+        });
+        return next;
       });
       setStepSaved((prev) => ({ ...prev, 2: true }));
-      setToast({ type: "success", message: "Measurements saved." });
+      setToast({ type: "success", message: "Measurements saved for all filled sections." });
       setShowItemErrors(false);
       setWizardStep(3);
       await loadCustomerDetail(selectedId);
@@ -994,8 +1100,16 @@ export default function App() {
       setError("Add valid items with quantity, rate, and subtotal greater than 0.");
       return;
     }
+    if (missingMeasurementTypesForItems.length > 0) {
+      setError(
+        `Measurements missing for: ${missingMeasurementTypesForItems
+          .map((type) => GARMENT_DISPLAY_LABELS[type] || type)
+          .join(", ")}.`
+      );
+      return;
+    }
     setError("");
-    setOrderDate(todayIsoDate());
+    setOrderDate(todayDisplayDate());
     setStepSaved((prev) => ({ ...prev, 3: true, 4: false }));
     setToast({ type: "success", message: "Items saved." });
     setShowPaymentErrors(false);
@@ -1006,6 +1120,14 @@ export default function App() {
     setShowPaymentErrors(true);
     if (paymentSummary.advance > paymentSummary.finalTotal) {
       setError("Advance paid cannot exceed final total.");
+      return;
+    }
+    if (!deliveryDate) {
+      setError("Select delivery date.");
+      return;
+    }
+    if (!isValidFutureOrTodayIsoDate(deliveryDate)) {
+      setError("Delivery date cannot be in the past.");
       return;
     }
     setError("");
@@ -1049,6 +1171,7 @@ export default function App() {
             discount_type: "amount",
             discount_value: 0,
             advance_paid: paymentSummary.advance,
+            delivery_date: deliveryDate,
             notes: paymentDraft.notes
           })
         },
@@ -1064,6 +1187,7 @@ export default function App() {
       setShowPaymentErrors(false);
       setStepSaved({ 2: false, 3: false, 4: false });
       setWizardStep(2);
+      setDeliveryDate("");
       await refreshSelected();
     } catch (err) {
       setError(err.message);
@@ -1071,10 +1195,15 @@ export default function App() {
   }
 
   async function markOrderCompleted(orderId) {
+    const orderContext =
+      typeof orderId === "object" && orderId !== null ? orderId : { id: Number(orderId) };
+    const targetOrderId = Number(orderContext.id);
+    if (!targetOrderId) return;
+
     try {
       setError("");
-      await api(
-        `/api/orders/${orderId}`,
+      const updated = await api(
+        `/api/orders/${targetOrderId}`,
         {
           method: "PUT",
           body: JSON.stringify({
@@ -1084,6 +1213,16 @@ export default function App() {
         },
         token
       );
+      const merged = { ...orderContext, ...updated };
+      const totalAmount = Math.max(0, parseNumber(merged.total_amount, 0));
+      const remainingDue = Math.max(0, parseNumber(merged.remaining_due, 0));
+      const paidTotal = Math.max(0, totalAmount - remainingDue);
+      setDeliverySlipOrder({
+        ...merged,
+        paid_total: paidTotal,
+        customer_name: merged.customer_name || selectedCustomer?.name || "Customer",
+        customer_phone: selectedCustomer?.phone || detail?.customer?.phone || ""
+      });
       setToast({ type: "success", message: "Order marked as completed." });
       if (selectedId) {
         await loadCustomerDetail(selectedId);
@@ -1101,7 +1240,7 @@ export default function App() {
     const due = Math.max(0, totalAmount - paidTotal);
 
     if (due <= 0.009) {
-      markOrderCompleted(order.id);
+      markOrderCompleted(order);
       return;
     }
 
@@ -1128,7 +1267,7 @@ export default function App() {
         token
       );
 
-      await api(
+      const updated = await api(
         `/api/orders/${completionModalOrder.id}`,
         {
           method: "PUT",
@@ -1139,6 +1278,16 @@ export default function App() {
         },
         token
       );
+      const merged = { ...completionModalOrder, ...updated };
+      const totalAmount = Math.max(0, parseNumber(merged.total_amount, 0));
+      const remainingDue = Math.max(0, parseNumber(merged.remaining_due, 0));
+      const paidTotal = Math.max(0, totalAmount - remainingDue);
+      setDeliverySlipOrder({
+        ...merged,
+        paid_total: paidTotal,
+        customer_name: merged.customer_name || selectedCustomer?.name || "Customer",
+        customer_phone: selectedCustomer?.phone || detail?.customer?.phone || ""
+      });
       setCompletionModalOrder(null);
       setToast({
         type: "success",
@@ -1154,17 +1303,70 @@ export default function App() {
     }
   }
 
+  function printDeliverySlip(order) {
+    if (!order) return;
+    const win = window.open("", "_blank", "width=420,height=700");
+    if (!win) return;
+
+    const lines = (Array.isArray(order.items) ? order.items : [])
+      .map((item) => {
+        const qty = Math.max(1, parseInt(item.quantity || "1", 10) || 1);
+        const itemType = String(item.item_type || "Item");
+        const lineTotal = qty * Math.max(0, parseNumber(item.rate, 0));
+        return `<tr><td>${itemType}</td><td>${qty}</td><td>${money(lineTotal)}</td></tr>`;
+      })
+      .join("");
+
+    win.document.write(`
+      <html>
+        <head>
+          <title>Delivery Slip #${order.id || ""}</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 14px; color: #111; }
+            h2 { margin: 0 0 8px; font-size: 18px; }
+            .meta { font-size: 12px; margin: 2px 0; }
+            table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+            th, td { border: 1px solid #999; padding: 6px; font-size: 12px; text-align: left; }
+            .totals { margin-top: 8px; font-size: 12px; }
+            .totals p { margin: 4px 0; }
+          </style>
+        </head>
+        <body>
+          <h2>${SHOP_NAME}</h2>
+          <p class="meta">${SHOP_ADDRESS}</p>
+          <p class="meta">Phone: ${SHOP_PHONE}</p>
+          <p class="meta">Order #: ${order.id || "-"}</p>
+          <p class="meta">Customer: ${order.customer_name || "Customer"}</p>
+          <p class="meta">Phone: ${order.customer_phone || "-"}</p>
+          <p class="meta">Delivery Date: ${formatDateDisplay(order.delivery_date)}</p>
+          <table>
+            <thead>
+              <tr><th>Item</th><th>Qty</th><th>Amount</th></tr>
+            </thead>
+            <tbody>${lines}</tbody>
+          </table>
+          <div class="totals">
+            <p>Total: <strong>${money(order.total_amount)}</strong></p>
+            <p>Cash Received: <strong>${money(order.paid_total)}</strong></p>
+            <p>Balance: <strong>${money(Math.max(0, parseNumber(order.total_amount, 0) - parseNumber(order.paid_total, 0)))}</strong></p>
+          </div>
+        </body>
+      </html>
+    `);
+    win.document.close();
+    win.focus();
+    win.print();
+  }
+
   if (!token) {
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-6 py-10">
         <section className="grid w-full overflow-hidden rounded-3xl bg-white shadow-panel lg:grid-cols-2">
           <div className="bg-brand-900 p-10 text-clay">
-            <p className="text-sm uppercase tracking-[0.3em] text-brand-100">TailorDesk</p>
-            <h1 className="mt-4 font-display text-4xl leading-tight">
-              Client history, measurements, and orders in one panel.
-            </h1>
+            <p className="text-sm uppercase tracking-[0.2em] text-brand-100">Bhavani Stitchers</p>
+            <h1 className="mt-4 font-display text-4xl leading-tight">{APP_TITLE}</h1>
             <p className="mt-4 max-w-sm text-sm text-brand-100">
-              Admins can create orders step-by-step. Users can safely view all records.
+              Client history, measurements, and orders in one panel.
             </p>
           </div>
           <form onSubmit={bootstrapNeeded ? handleSetupAdmin : handleLogin} className="space-y-4 p-10">
@@ -1191,7 +1393,7 @@ export default function App() {
               </label>
             ) : null}
             <label className="block text-sm font-semibold text-ink">
-              Email
+              {bootstrapNeeded ? "Email" : "Email or Mobile"}
               <input
                 required
                 className="mt-1 w-full rounded-xl border border-brand-300 px-3 py-2 outline-none ring-brand-500 focus:ring"
@@ -1213,7 +1415,6 @@ export default function App() {
                 }
               />
             </label>
-            {error ? <p className="rounded-lg bg-red-50 p-2 text-sm text-red-700">{error}</p> : null}
             <button
               disabled={loading}
               className="w-full rounded-xl bg-brand-700 px-4 py-2 font-semibold text-white transition hover:bg-brand-900 disabled:opacity-50"
@@ -1230,7 +1431,7 @@ export default function App() {
     <main className="mx-auto flex h-screen w-full max-w-7xl flex-col gap-4 overflow-hidden px-4 py-4 md:px-8">
       <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-gradient-to-r from-brand-900 via-brand-700 to-brand-500 p-4 text-white shadow-2xl">
         <div>
-          <h1 className="font-display text-3xl">TailorDesk</h1>
+          <h1 className="font-display text-3xl">{APP_TITLE}</h1>
           <p className="text-sm text-brand-50">Signed in as {user?.name} ({user?.role})</p>
         </div>
         <div className="flex items-center gap-2">
@@ -1498,7 +1699,21 @@ export default function App() {
                           .filter((order) => order.status === "completed")
                           .map((order) => (
                             <div key={order.id} className="rounded-xl border border-emerald-200 bg-white p-3">
-                              <p className="font-semibold text-ink">#{order.id} {order.customer_name}</p>
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="font-semibold text-ink">#{order.id} {order.customer_name}</p>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    printDeliverySlip({
+                                      ...order,
+                                      customer_phone: detail?.customer?.phone || ""
+                                    })
+                                  }
+                                  className="rounded-lg bg-brand-700 px-2 py-1 text-xs font-semibold text-white"
+                                >
+                                  Print Slip
+                                </button>
+                              </div>
                               <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
                                 <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
                                   <p className="text-slate-500">Total</p>
@@ -1644,7 +1859,6 @@ export default function App() {
         </section>
       ) : (
         <>
-      {error ? <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       <section className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[320px_1fr]">
         <aside className="flex min-h-0 flex-col gap-4 rounded-2xl bg-white/95 p-4 shadow-2xl ring-1 ring-white/70 backdrop-blur">
           <div className="space-y-2">
@@ -1833,67 +2047,45 @@ export default function App() {
                         Step 1: Measurements {stepCompleted[2] ? "✓" : ""}
                       </h3>
                       <p className="text-xs text-slate-600">
-                        Select garment type. If previous measurement exists, it is auto-filled.
+                        Fill measurements directly for all garment types. Previously saved values are auto-filled.
                       </p>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        <select
-                          value={measurementDraft.garment_type}
-                          onChange={(event) => applyMeasurementAutofill(event.target.value)}
-                          className="col-span-2 rounded-xl border border-brand-200 bg-white px-3 py-2 text-sm font-semibold text-ink shadow-sm outline-none ring-brand-400 focus:ring"
-                        >
-                          {GARMENT_TYPES.map((item) => (
-                            <option key={item} value={item}>
-                              {item}
-                            </option>
-                          ))}
-                        </select>
-
-                        {measurementDraft.garment_type === "Other" ? (
-                          <input
-                            placeholder="Custom garment type"
-                            value={measurementDraft.garment_type_other}
-                            onChange={(event) => applyMeasurementAutofill("Other", event.target.value)}
-                            className={`rounded-xl border bg-white px-3 py-2 text-sm shadow-sm outline-none ring-brand-400 focus:ring ${
-                              showMeasurementErrors && measurementFieldErrors.missingType
-                                ? "border-red-400"
-                                : "border-brand-200"
+                      <div className="space-y-1.5">
+                        {MEASUREMENT_SECTION_TYPES.map((garmentType) => (
+                          <div
+                            key={garmentType}
+                            className={`rounded-lg border bg-white p-2 ${
+                              showMeasurementErrors && !hasAnyMeasurementInput
+                                ? "border-red-300"
+                                : "border-brand-100"
                             }`}
-                          />
-                        ) : null}
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-24 shrink-0 text-xs font-bold uppercase tracking-wide text-ink">
+                                  {GARMENT_DISPLAY_LABELS[garmentType] || garmentType}
+                              </div>
+                              <div className="flex flex-1 flex-nowrap items-end gap-1 overflow-x-auto pb-0.5">
+                                {getFieldsForGarment(garmentType).map(([fieldKey, label]) => (
+                                  <label
+                                    key={`${garmentType}-${fieldKey}`}
+                                    className="w-[58px] shrink-0 space-y-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                                  >
+                                    <span>{label}</span>
+                                    <input
+                                      value={measurementDraft.measurement_data[garmentType]?.[fieldKey] || ""}
+                                      onChange={(event) =>
+                                        updateMeasurementField(garmentType, fieldKey, event.target.value)
+                                      }
+                                      className="w-full rounded border border-brand-200 bg-white px-1 py-1 text-[11px] font-medium normal-case text-ink outline-none ring-brand-400 focus:ring"
+                                    />
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
 
-                        {measurementFields.length > 0 ? (
-                          measurementFields.map(([fieldKey, label]) => (
-                            <label key={fieldKey} className="space-y-1 text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
-                              <span>{label}</span>
-                              <input
-                                value={measurementDraft.measurement_data[fieldKey] || ""}
-                                onChange={(event) => updateMeasurementField(fieldKey, event.target.value)}
-                                className={`w-full rounded-xl border bg-white px-3 py-2 text-sm font-medium normal-case text-ink shadow-sm outline-none ring-brand-400 focus:ring ${
-                                  showMeasurementErrors &&
-                                  measurementFieldErrors.missingKeys.includes(fieldKey)
-                                    ? "border-red-400"
-                                    : "border-brand-200"
-                                }`}
-                              />
-                            </label>
-                          ))
-                        ) : (
-                          <label className="col-span-2 space-y-1 text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
-                            <span>Detail</span>
-                            <textarea
-                              placeholder="Custom measurement details"
-                              value={measurementDraft.measurement_data.custom_details || ""}
-                              onChange={(event) => updateMeasurementField("custom_details", event.target.value)}
-                              className={`min-h-20 w-full rounded-xl border bg-white px-3 py-2 text-sm font-medium normal-case text-ink shadow-sm outline-none ring-brand-400 focus:ring ${
-                                showMeasurementErrors && measurementFieldErrors.missingCustom
-                                  ? "border-red-400"
-                                  : "border-brand-200"
-                              }`}
-                            />
-                          </label>
-                        )}
-                        <label className="col-span-2 space-y-1 text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
+                        <label className="space-y-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-600">
                           <span>Detail</span>
                           <input
                             placeholder="Additional note"
@@ -1901,16 +2093,13 @@ export default function App() {
                             onChange={(event) =>
                               setMeasurementDraft((prev) => ({ ...prev, measurement_note: event.target.value }))
                             }
-                            className="w-full rounded-xl border border-brand-200 bg-white px-3 py-2 text-sm font-medium normal-case text-ink shadow-sm outline-none ring-brand-400 focus:ring"
+                            className="w-full rounded border border-brand-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-ink shadow-sm outline-none ring-brand-400 focus:ring"
                           />
                         </label>
                       </div>
-                      {showMeasurementErrors &&
-                      (measurementFieldErrors.missingType ||
-                        measurementFieldErrors.missingCustom ||
-                        measurementFieldErrors.missingKeys.length > 0) ? (
+                      {showMeasurementErrors && !hasAnyMeasurementInput ? (
                         <p className="text-xs font-semibold text-red-600">
-                          Required fields are highlighted in red.
+                          Enter at least one measurement value to continue.
                         </p>
                       ) : null}
 
@@ -1961,7 +2150,7 @@ export default function App() {
                                         type.toLowerCase()
                                   )}
                                 >
-                                  {type}
+                                  {GARMENT_DISPLAY_LABELS[type] || type}
                                 </option>
                               ))}
                             </select>
@@ -2096,6 +2285,21 @@ export default function App() {
                           <p className="font-semibold text-ink">{orderDate}</p>
                         </div>
 
+                        <label className="rounded-xl border border-brand-100 bg-white p-3 shadow-sm">
+                          <p className="text-xs text-slate-500">Delivery Date</p>
+                          <input
+                            type="date"
+                            value={deliveryDate}
+                            min={todayIsoDate()}
+                            onChange={(event) => setDeliveryDate(event.target.value)}
+                            className={`mt-1 w-full rounded-lg border bg-white px-2 py-1.5 text-sm font-medium outline-none ring-brand-400 focus:ring ${
+                              showPaymentErrors && (!deliveryDate || !isValidFutureOrTodayIsoDate(deliveryDate))
+                                ? "border-red-400"
+                                : "border-brand-200"
+                            }`}
+                          />
+                        </label>
+
                         <input
                           placeholder="Order Note"
                           value={paymentDraft.notes}
@@ -2104,8 +2308,16 @@ export default function App() {
                         />
                       </div>
                       {showPaymentErrors && paymentSummary.advance > paymentSummary.finalTotal ? (
+                        <p className="text-xs font-semibold text-red-600">Advance cannot exceed final total.</p>
+                      ) : null}
+                      {showPaymentErrors && !deliveryDate ? (
                         <p className="text-xs font-semibold text-red-600">
-                          Advance cannot exceed final total.
+                          Delivery date is required.
+                        </p>
+                      ) : null}
+                      {showPaymentErrors && deliveryDate && !isValidFutureOrTodayIsoDate(deliveryDate) ? (
+                        <p className="text-xs font-semibold text-red-600">
+                          Delivery date cannot be in the past.
                         </p>
                       ) : null}
 
@@ -2144,6 +2356,11 @@ export default function App() {
                         <div className="rounded-lg bg-slate-50 p-3">
                           <p className="text-xs font-semibold text-slate-600">Order Date</p>
                           <p className="font-semibold text-ink">{orderDate}</p>
+                        </div>
+
+                        <div className="rounded-lg bg-slate-50 p-3">
+                          <p className="text-xs font-semibold text-slate-600">Delivery Date</p>
+                          <p className="font-semibold text-ink">{formatDateDisplay(deliveryDate)}</p>
                         </div>
                       </div>
 
@@ -2328,6 +2545,19 @@ export default function App() {
                           >
                             Mark Completed
                           </button>
+                        ) : ordersModalTab === "completed" ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              printDeliverySlip({
+                                ...order,
+                                customer_phone: detail?.customer?.phone || ""
+                              })
+                            }
+                            className="rounded-lg bg-brand-700 px-3 py-1.5 text-xs font-semibold text-white"
+                          >
+                            Print Slip
+                          </button>
                         ) : null}
                       </div>
                       <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
@@ -2468,6 +2698,83 @@ export default function App() {
                 className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700"
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deliverySlipOrder ? (
+        <div className="fixed inset-0 z-[67] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl">
+            <h3 className="font-display text-2xl text-ink">Customer Delivery Slip</h3>
+            <p className="mt-1 text-sm text-slate-700">Final handover copy for completed order.</p>
+
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+              <p>
+                <span className="font-semibold">Order:</span> #{deliverySlipOrder.id}
+              </p>
+              <p>
+                <span className="font-semibold">Customer:</span> {deliverySlipOrder.customer_name || "Customer"}
+              </p>
+              <p>
+                <span className="font-semibold">Phone:</span> {deliverySlipOrder.customer_phone || "-"}
+              </p>
+              <p>
+                <span className="font-semibold">Delivery Date:</span>{" "}
+                {formatDateDisplay(deliverySlipOrder.delivery_date)}
+              </p>
+            </div>
+
+            <div className="mt-3 max-h-44 space-y-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-3 text-xs">
+              {(Array.isArray(deliverySlipOrder.items) ? deliverySlipOrder.items : []).map((item) => {
+                const qty = Math.max(1, parseInt(item.quantity || "1", 10) || 1);
+                const rate = Math.max(0, parseNumber(item.rate, 0));
+                return (
+                  <p key={`delivery-slip-item-${item.id || item.item_type}`}>
+                    {qty} x {item.item_type} x {money(rate)} = {money(qty * rate)}
+                  </p>
+                );
+              })}
+            </div>
+
+            <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                <p className="text-slate-500">Total</p>
+                <p className="font-semibold text-ink">{money(deliverySlipOrder.total_amount)}</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                <p className="text-slate-500">Cash Received</p>
+                <p className="font-semibold text-ink">{money(deliverySlipOrder.paid_total)}</p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                <p className="text-slate-500">Balance</p>
+                <p className="font-semibold text-ink">
+                  {money(
+                    Math.max(
+                      0,
+                      parseNumber(deliverySlipOrder.total_amount, 0) -
+                        parseNumber(deliverySlipOrder.paid_total, 0)
+                    )
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => printDeliverySlip(deliverySlipOrder)}
+                className="rounded-lg bg-brand-700 px-3 py-1.5 text-sm font-semibold text-white"
+              >
+                Print Slip
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeliverySlipOrder(null)}
+                className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700"
+              >
+                Close
               </button>
             </div>
           </div>
