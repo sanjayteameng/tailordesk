@@ -1305,6 +1305,23 @@ export default function App() {
 
   function printDeliverySlip(order) {
     if (!order) return;
+    const customerName =
+      String(
+        order.customer_name ||
+          order.customer?.name ||
+          selectedCustomer?.name ||
+          detail?.customer?.name ||
+          "Customer"
+      ).trim() || "Customer";
+    const customerPhone =
+      String(
+        order.customer_phone ||
+          order.customer?.phone ||
+          selectedCustomer?.phone ||
+          detail?.customer?.phone ||
+          "-"
+      ).trim() || "-";
+
     const win = window.open("", "_blank", "width=420,height=700");
     if (!win) return;
 
@@ -1336,8 +1353,8 @@ export default function App() {
           <p class="meta">${SHOP_ADDRESS}</p>
           <p class="meta">Phone: ${SHOP_PHONE}</p>
           <p class="meta">Order #: ${order.id || "-"}</p>
-          <p class="meta">Customer: ${order.customer_name || "Customer"}</p>
-          <p class="meta">Phone: ${order.customer_phone || "-"}</p>
+          <p class="meta">Customer: ${customerName}</p>
+          <p class="meta">Phone: ${customerPhone}</p>
           <p class="meta">Delivery Date: ${formatDateDisplay(order.delivery_date)}</p>
           <table>
             <thead>
