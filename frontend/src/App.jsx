@@ -2240,6 +2240,15 @@ export default function App() {
                         ))}
                       </div>
 
+                      <div className="rounded-xl border border-brand-200 bg-brand-50/70 px-3 py-2 shadow-sm">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subtotal</p>
+                        <p className="text-base font-bold text-ink">{money(subtotal)}</p>
+                      </div>
+                      {showItemErrors && (hasItemErrors || subtotal <= 0) ? (
+                        <p className="text-xs font-semibold text-red-600">
+                          Fill item type, quantity, and rate for each row. Subtotal must be greater than 0.
+                        </p>
+                      ) : null}
                       <StickyStepActions>
                         <button
                           type="button"
@@ -2273,16 +2282,6 @@ export default function App() {
                           Save & Next
                         </button>
                       </StickyStepActions>
-
-                      <div className="rounded-xl border border-brand-200 bg-brand-50/70 px-3 py-2 shadow-sm">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subtotal</p>
-                        <p className="text-base font-bold text-ink">{money(subtotal)}</p>
-                      </div>
-                      {showItemErrors && (hasItemErrors || subtotal <= 0) ? (
-                        <p className="text-xs font-semibold text-red-600">
-                          Fill item type, quantity, and rate for each row. Subtotal must be greater than 0.
-                        </p>
-                      ) : null}
                     </div>
                   ) : null}
 
@@ -2429,7 +2428,7 @@ export default function App() {
                                 : getLegacyMeasurementData(measurement);
                             return (
                               <p key={measurement.id} className="text-xs text-slate-700">
-                                {measurement.item_type}: {summarizeMeasurementData(data)}
+                                {displayGarmentType(measurement.item_type)}: {summarizeMeasurementData(data)}
                               </p>
                             );
                           }
@@ -2440,7 +2439,7 @@ export default function App() {
                         <p className="text-xs font-semibold text-slate-600">Items</p>
                         {orderItemsWithTotals.map((item) => (
                           <p key={item.id} className="text-xs text-slate-700">
-                            {item.quantity_num} x {item.item_type} x {money(item.rate_num)} = {money(item.line_total)}
+                            {item.quantity_num} x {displayGarmentType(item.item_type)} x {money(item.rate_num)} = {money(item.line_total)}
                           </p>
                         ))}
                         <p className="mt-2 text-sm font-semibold text-ink">Subtotal: {money(subtotal)}</p>
@@ -2504,7 +2503,7 @@ export default function App() {
                           >
                             <div className="flex items-start justify-between gap-2">
                               <div>
-                                <p className="font-semibold">{measurement.item_type || "Item"}</p>
+                                <p className="font-semibold">{displayGarmentType(measurement.item_type || "Item")}</p>
                                 <p className="text-xs text-slate-700">
                                   {summarizeMeasurementData(data, measurement.notes || "No measurements")}
                                 </p>
@@ -2582,8 +2581,8 @@ export default function App() {
                 (ordersModalTab === "current" ? orderBuckets.current : orderBuckets.completed).map((order) => {
                   const detailedTypes =
                     Array.isArray(order.items) && order.items.length > 0
-                      ? order.items.map((item) => `${item.item_type} x${item.quantity}`).join(", ")
-                      : order.garment_type || "Order";
+                      ? order.items.map((item) => `${displayGarmentType(item.item_type)} x${item.quantity}`).join(", ")
+                      : displayGarmentType(order.garment_type || "Order");
 
                   return (
                     <div key={order.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -2653,7 +2652,7 @@ export default function App() {
                         <div className="mt-1 space-y-1">
                           {order.items.map((item) => (
                             <p key={item.id} className="text-xs text-slate-600">
-                              {item.quantity} x {item.item_type} x {money(item.rate)} = {money(item.line_total)}
+                              {item.quantity} x {displayGarmentType(item.item_type)} x {money(item.rate)} = {money(item.line_total)}
                             </p>
                           ))}
                         </div>
